@@ -1,0 +1,104 @@
+/*
+ * This file is part of the loccorr project.
+ * Copyright 2021 Edward V. Emelianov <edward.emelianoff@gmail.com>.
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ */
+#pragma once
+#ifndef CONFIG_H__
+#define CONFIG_H__
+
+// default configuration borders
+// min/max total steps range
+#define MINSTEPS        (100)
+#define MAXSTEPS        (50000)
+// steps per pixel
+#define COEFMIN         (0.1)
+#define COEFMAX         (10000)
+// area
+#define MINAREA         (4)
+#define MAXAREA         (250000)
+#define MAX_NDILAT      (100)
+#define MAX_NEROS       (100)
+#define MAX_THROWPART   (0.9)
+#define MAX_OFFSET      (10000)
+#define EXPOS_MIN       (0.001)
+#define EXPOS_MAX       (500.)
+#define NAVER_MAX       (50)
+// coefficients to convert dx,dy to du,dv
+#define KUVMIN           (-5000.)
+#define KUVMAX           (5000.)
+// default coefficient for corrections (move to Kdu, Kdv instead of du, dv)
+#define KCORR           (0.9)
+
+typedef struct{
+    int maxUsteps;      // max amount of steps by both axes
+    int maxVsteps;
+    int minarea;        // min/max area of star image
+    int maxarea;
+    int Nerosions;      // amount of erosions/dilations
+    int Ndilations;
+    int xoff;           // subimage offset
+    int yoff;
+    int width;          // subimage size
+    int height;
+    int equalize;       // !=0 to equalize output image histogram
+    int naverage;       // amount of images for average calculation (>1)
+    int stpserverport;  // steppers' server port
+    int starssort;      // stars sorting algorithm: by distance from target (0) or by intensity (1)
+    // dU = Kxu*dX + Kyu*dY; dV = Kxv*dX + Kyv*dY
+    double Kxu; double Kyu;
+    double Kxv; double Kyv;
+    double xtarget;     // target (center) values
+    double ytarget;
+    double throwpart;   // part of values to throw avay @ histogram equalisation
+    double maxexp;      // minimal and maximal exposition (in ms)
+    double minexp;
+    double intensthres; // threshold for stars intensity comparison: fabs(Ia-Ib)/(Ia+Ib) > thres -> stars differs
+} configuration;
+
+typedef enum{
+    PAR_INT,
+    PAR_DOUBLE
+} partype;
+
+typedef struct{
+    const char *name;   // parameter name
+    partype type;       // type of parameter's value
+    void *ptr;          // pointer to value in `theconf`
+    int got;            // counter of parameter in config file
+    double minval;      // min/max values
+    double maxval;
+    const char *help;   // help message
+} confparam;
+
+typedef union{
+    double dblval;
+    int intval;
+} dblint;
+
+typedef struct{
+    dblint val;
+    partype type;
+} key_value;
+
+extern configuration theconf;
+char *get_cmd_list(char *buff, int l);
+int chkconfig(const char *confname);
+int saveconf(const char *confname);
+char *get_keyval(const char *pair, char value[128]);
+confparam *chk_keyval(const char *key, const char *val, key_value *result);
+char *listconf(char *buf, int buflen);
+
+#endif // CONFIG_H__

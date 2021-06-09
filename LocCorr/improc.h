@@ -21,9 +21,26 @@
 
 #include "imagefile.h"
 
+// tolerance of deviations by X and Y axis
+#define XY_TOLERANCE                (1.)
+// roundness parameter
+#define MINWH                       (0.2)
+#define MAXWH                       (5.)
+
+#define PUSIROBO_POSTPROC   "pusirobo"
+// how many frames will be averaged to count image deviation
+#define MAX_AVERAGING_ARRAY_SIZE        (25)
+
+extern int stopwork;
+extern double Xtarget, Ytarget;
+
 void process_file(Image *I);
 int  process_input(InputType tp, char *name);
 void openXYlog(const char *name);
 void closeXYlog();
+void setpostprocess(const char *name);
+extern char *(*stepstatus)(char *buf, int buflen);
+extern char *(*setstepstatus)(const char *newstatus, char *buf, int buflen);
+extern char *(*movefocus)(const char *newstatus, char *buf, int buflen);
 
 #endif // IMPROC_H__

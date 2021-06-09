@@ -26,6 +26,8 @@
 #include <usefull_macros.h>
 
 #include "cmdlnopts.h"
+#include "config.h"
+#include "improc.h"
 
 /*
  * here are global parameters initialisation
@@ -33,23 +35,26 @@
 static int help;
 glob_pars *GP = NULL;
 
-// default PID filename:
-#define DEFAULT_PIDFILE "/tmp/loccorr.pid"
-
 //            DEFAULTS
 // default global parameters
 static glob_pars G = {
     .pidfile = DEFAULT_PIDFILE,
-    .throwpart = 0.5,
-    .medradius = 1.,
-    .ndilations = 2,
-    .nerosions = 2,
-    .minarea = 5,
-    .intensthres = 0.01,
-    .maxexp = 500.,
-    .minexp = 0.001,
+    .configname = DEFAULT_CONFFILE,
+    .pusiservport = DEFAULT_PUSIPORT,
+    .throwpart = DEFAULT_THROWPART,
+//    .medradius = 1.,
+    .ndilations = DEFAULT_DILATIONS,
+    .nerosions = DEFAULT_EROSIONS,
+    .minarea = DEFAULT_MINAREA,
+    .maxarea = DEFAULT_MAXAREA,
+    .intensthres = DEFAULT_INTENSTHRES,
+    .maxexp = EXPOS_MAX,
+    .minexp = EXPOS_MIN,
     .xtarget = -1.,
-    .ytarget = -1.
+    .ytarget = -1.,
+    .Naveraging = DEFAULT_NAVERAGE,
+    .ioport = DEFAULT_IOPORT,
+    .outputjpg = DEFAULT_OUTPJPEG,
 };
 
 /*
@@ -58,27 +63,34 @@ static glob_pars G = {
 */
 static myoption cmdlnopts[] = {
 // common options
-    {"help",    NO_ARGS,    NULL,     0,    arg_int,    APTR(&help),        _("show this help")},
+    {"maxexp",  NEED_ARG,   NULL,   0,      arg_double, APTR(&G.maxexp),    _("maximal exposition time (ms), default: 500")},
+    {"minexp",  NEED_ARG,   NULL,   0,      arg_double, APTR(&G.minexp),    _("minimal exposition time (ms), default: 0.001")},
+    {"help",    NO_ARGS,    NULL,   'h',    arg_int,    APTR(&help),        _("show this help")},
     {"logfile", NEED_ARG,   NULL,   'l',    arg_string, APTR(&G.logfile),   _("file to save logs (default: none)")},
     {"pidfile", NEED_ARG,   NULL,   'P',    arg_string, APTR(&G.pidfile),   _("pidfile (default: " DEFAULT_PIDFILE ")")},
     {"verbose", NO_ARGS,    NULL,   'v',    arg_none,   APTR(&G.verb),      _("increase verbosity level of log file (each -v increased by 1)")},
     {"input",   NEED_ARG,   NULL,   'i',    arg_string, APTR(&G.inputname), _("file or directory name for monitoring (or grasshopper for capturing)")},
     {"blackp",  NEED_ARG,   NULL,   'b',    arg_double, APTR(&G.throwpart), _("fraction of black pixels to throw away when make histogram eq")},
-    {"radius",  NEED_ARG,   NULL,   'r',    arg_int,    APTR(&G.medradius), _("radius of median filter (r=1 -> 3x3, r=2 -> 5x5 etc.)")},
+//    {"radius",  NEED_ARG,   NULL,   'r',    arg_int,    APTR(&G.medradius), _("radius of median filter (r=1 -> 3x3, r=2 -> 5x5 etc.)")},
     {"equalize", NO_ARGS,   NULL,   'e',    arg_int,    APTR(&G.equalize),  _("make historam equalization of saved jpeg")},
-    {"ndilat",  NEED_ARG,   NULL,   'D',    arg_int,    APTR(&G.ndilations),_("amount of erosions after thresholding (default: 2)")},
-    {"neros",   NEED_ARG,   NULL,   'E',    arg_int,    APTR(&G.nerosions), _("amount of dilations after erosions (default: 2)")},
-    {"minarea", NEED_ARG,   NULL,   'A',    arg_int,    APTR(&G.minarea),   _("minimal object pixels amount (default: 5)")},
+    {"ndilat",  NEED_ARG,   NULL,   'D',    arg_int,    APTR(&G.ndilations),_("amount of dilations after thresholding (default: 2)")},
+    {"neros",   NEED_ARG,   NULL,   'E',    arg_int,    APTR(&G.nerosions), _("amount of erosions after dilations (default: 2)")},
+    {"minarea", NEED_ARG,   NULL,   'I',    arg_int,    APTR(&G.minarea),   _("minimal object pixels amount (default: 400)")},
+    {"maxarea", NEED_ARG,   NULL,   'A',    arg_int,    APTR(&G.maxarea),   _("maximal object pixels amount (default: 150000)")},
     {"intthres",NEED_ARG,   NULL,   'T',    arg_double, APTR(&G.intensthres),_("threshold by total object intensity when sorting = |I1-I2|/(I1+I2), default: 0.01")},
     {"xoff",    NEED_ARG,   NULL,   'x',    arg_int,    APTR(&G.xoff),      _("X offset at grabbed image")},
     {"yoff",    NEED_ARG,   NULL,   'y',    arg_int,    APTR(&G.yoff),      _("Y offset at grabbed image")},
-    {"width",   NEED_ARG,   NULL,   'w',    arg_int,    APTR(&G.width),     _("grabbed subimage width")},
-    {"height",  NEED_ARG,   NULL,   'h',    arg_int,    APTR(&G.height),    _("grabbed subimage height")},
-    {"maxexp",  NEED_ARG,   NULL,   0,      arg_double, APTR(&G.maxexp),    _("maximal exposition time (ms), default: 500")},
-    {"minexp",  NEED_ARG,   NULL,   0,      arg_double, APTR(&G.minexp),    _("minimal exposition time (ms), default: 0.001")},
+    {"width",   NEED_ARG,   NULL,   'W',    arg_int,    APTR(&G.width),     _("grabbed subimage width")},
+    {"height",  NEED_ARG,   NULL,   'H',    arg_int,    APTR(&G.height),    _("grabbed subimage height")},
     {"xtarget", NEED_ARG,   NULL,   'X',    arg_double, APTR(&G.xtarget),   _("target point X coordinate")},
     {"ytarget", NEED_ARG,   NULL,   'Y',    arg_double, APTR(&G.ytarget),   _("target point Y coordinate")},
     {"logXY",   NEED_ARG,   NULL,   'L',    arg_string, APTR(&G.logXYname), _("file to log XY coordinates of selected star")},
+    {"confname",NEED_ARG,   NULL,   'c',    arg_string, APTR(&G.configname),_("name of configuration file (default: ./loccorr.conf)")},
+    {"proc",    NEED_ARG,   NULL,   'p',    arg_string, APTR(&G.processing),_("==\"" PUSIROBO_POSTPROC "\" to fix corrections with pusirobot drives")},
+    {"canport", NEED_ARG,   NULL,   'C',    arg_string, APTR(&G.pusiservport),_("port of local pusirobot CAN server (default: 4444)")},
+    {"naverage",NEED_ARG,   NULL,   'N',    arg_int,    APTR(&G.Naveraging),_("amount of images to average processing (min 2, max 25)")},
+    {"ioport",  NEED_ARG,   NULL,   0,      arg_int,    APTR(&G.ioport),    _("port for IO communication")},
+    {"jpegout", NEED_ARG,   NULL,   'j',    arg_string, APTR(&G.outputjpg), _("output jpeg file location (default: '" DEFAULT_OUTPJPEG "')")},
    end_option
 };
 

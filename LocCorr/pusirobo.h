@@ -16,14 +16,29 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 #pragma once
-#ifndef GRASSHOPPER_H__
-#define GRASSHOPPER_H__
+#ifndef PUSIROBO_H__
+#define PUSIROBO_H__
 
-#include "fits.h" // Image*
+typedef enum{
+    PUSI_DISCONN,
+    PUSI_RELAX,
+    PUSI_SETUP,
+    PUSI_GOTOTHEMIDDLE,
+    PUSI_FINDTARGET,
+    PUSI_FIX,
+    PUSI_UNDEFINED
+} pusistate;
 
-#define GRASSHOPPER_CAPT_NAME   "grasshopper"
+// try to connect to local pusirobo server
+int pusi_connect();
+int pusi_setstate(pusistate newstate);
+pusistate pusi_getstate();
+void pusi_disconnect();
+void pusi_process_corrections(double X, double Y, int corrflag);
+char *pusi_status(char *buf, int buflen);
+char *set_pusistatus(const char *newstatus, char *buf, int buflen);
+char *set_pfocus(const char *newstatus, char *buf, int buflen);
+char *get_JSON_status(char *buf, int buflen);
+// ADD global SEND
 
-void disconnectGrasshopper();
-int capture_grasshopper(void (*process)(Image *));
-
-#endif // GRASSHOPPER_H__
+#endif // PUSIROBO_H__

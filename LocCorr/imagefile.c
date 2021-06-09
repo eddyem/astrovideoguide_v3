@@ -28,6 +28,7 @@
 #include <stb/stb_image_write.h>
 
 #include "cmdlnopts.h"
+#include "config.h"
 #include "draw.h"
 #include "grasshopper.h"
 #include "imagefile.h"
@@ -333,11 +334,21 @@ int Image_write_jpg(const Image *I, const char *name, int eq){
     if(!I || !I->data) return 0;
     uint8_t *outp = NULL;
     if(eq)
-        outp = equalize(I, 1, GP->throwpart);
+        outp = equalize(I, 1, theconf.throwpart);
     else
         outp = linear(I, 1);
     DBG("Try to write %s", name);
-    int r = stbi_write_jpg(name, I->width, I->height, 1, outp, 95);
+    char *tmpnm = MALLOC(char, strlen(name) + 5);
+    sprintf(tmpnm, "%s-tmp", name);
+//    char *tmpnm = tmpnam_r(buf);
+    int r = stbi_write_jpg(tmpnm, I->width, I->height, 1, outp, 95);
+    if(r){
+        if(rename(tmpnm, name)){
+            WARN("rename()");
+            r = 0;
+        }
+    }
+    FREE(tmpnm);
     FREE(outp);
     return r;
 }

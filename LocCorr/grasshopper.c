@@ -24,9 +24,11 @@
 #include <usefull_macros.h>
 
 #include "cmdlnopts.h"
+#include "config.h"
 #include "fits.h"
 #include "grasshopper.h"
 #include "imagefile.h"
+#include "improc.h"
 
 static fc2Context context;
 static fc2PGRGuid guid;
@@ -121,7 +123,8 @@ int propOnOff(fc2PropertyType t, BOOL onOff){
 #define setgain(g)          setfloat(FC2_GAIN, g)
 
 static int connected = 0;
-static void disconnect(){
+void disconnectGrasshopper(){
+    if(!connected) return;
     connected = 0;
     fc2DestroyContext(context);
 }
@@ -138,10 +141,10 @@ static int changeformat(){
     DBG("packsz=%u, perc=%f, off=%d/%d, HW=%d/%d", packSz, perc, f7.offsetX, f7.offsetY, f7.height, f7.width);
     */
     f7.mode = FC2_MODE_0;
-    f7.offsetX = (GP->xoff < (int)f7i.maxWidth && GP->xoff > -1) ? GP->xoff : 0;
-    f7.offsetY = (GP->yoff < (int)f7i.maxHeight && GP->yoff > -1) ? GP->yoff : 0;
-    f7.width = (f7.offsetX+GP->width <= f7i.maxWidth && GP->width > 1) ? (unsigned int)GP->width : f7i.maxWidth - f7.offsetX;
-    f7.height = (f7.offsetY+GP->height <= f7i.maxHeight && GP->height > 1) ? (unsigned int)GP->height : f7i.maxHeight - f7.offsetY;
+    f7.offsetX = (theconf.xoff < (int)f7i.maxWidth && theconf.xoff > -1) ? theconf.xoff : 0;
+    f7.offsetY = (theconf.yoff < (int)f7i.maxHeight && theconf.yoff > -1) ? theconf.yoff : 0;
+    f7.width = (f7.offsetX+theconf.width <= f7i.maxWidth && theconf.width > 1) ? (unsigned int)theconf.width : f7i.maxWidth - f7.offsetX;
+    f7.height = (f7.offsetY+theconf.height <= f7i.maxHeight && theconf.height > 1) ? (unsigned int)theconf.height : f7i.maxHeight - f7.offsetY;
     DBG("offx=%d, offy=%d, w=%d, h=%d ", f7.offsetX, f7.offsetY, f7.width, f7.height);
     f7.pixelFormat = FC2_PIXEL_FORMAT_MONO8;
     fc2Format7PacketInfo f7p;
@@ -162,7 +165,7 @@ static int connect(){
     FC2FN(fc2GetNumOfCameras, &numCameras);
     if(numCameras == 0){
         WARNX("No cameras detected!");
-        disconnect();
+        disconnectGrasshopper();
         return 0;
     }
     DBG("Found %d camera[s]", numCameras);
@@ -213,7 +216,7 @@ static int GrabImage(fc2Image *convertedImage){
 static void calcexpgain(float newexp){
     DBG("recalculate exposition: oldexp=%g, oldgain=%g, newexp=%g", exptime, gain, newexp);
     if(newexp < exptime){ // first we should make gain lower
-        if(10.*newexp < GP->maxexp){
+        if(10.*newexp < theconf.maxexp){
             if(gain > 10.){
                 gain = 10.;
                 newexp *= 10.;
@@ -223,15 +226,15 @@ static void calcexpgain(float newexp){
             }
         }
     }else{ // if new exposition too large, increase gain
-        if(newexp > GP->maxexp){
+        if(newexp > theconf.maxexp){
             if(gain < 19.){
                 gain += 10.;
                 newexp /= 10.;
             }
         }
     }
-    if(newexp < GP->minexp) newexp = GP->minexp;
-    else if(newexp > GP->maxexp) newexp = GP->maxexp;
+    if(newexp < theconf.minexp) newexp = theconf.minexp;
+    else if(newexp > theconf.maxexp) newexp = theconf.maxexp;
     exptime = newexp;
     DBG("New values: exp=%g, gain=%g", exptime, gain);
 }
@@ -276,6 +279,7 @@ int capture_grasshopper(void (*process)(Image*)){
     }
     Image *oIma = NULL;
     while(1){
+        if(stopwork) return 1;
         if(!connect()){ // wait until camera be powered on
             DBG("Disconnected");
             sleep(1);
@@ -287,7 +291,7 @@ int capture_grasshopper(void (*process)(Image*)){
                 oldexptime = exptime;
             }else{
                 WARNX("Can't change exposition time to %gms", exptime);
-                disconnect();
+                disconnectGrasshopper();
                 continue;
             }
         }
@@ -297,13 +301,13 @@ int capture_grasshopper(void (*process)(Image*)){
                 oldgain = gain;
             }else{
                 WARNX("Can't change gain to %g", gain);
-                disconnect();
+                disconnectGrasshopper();
                 continue;
             }
         }
         if(!GrabImage(&convertedImage)){
             WARNX("Can't grab image");
-            disconnect();
+            disconnectGrasshopper();
             continue;
         }
         if(!process) continue;

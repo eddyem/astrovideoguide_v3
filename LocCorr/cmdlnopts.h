@@ -23,6 +23,24 @@
 #ifndef CMDLNOPTS_H__
 #define CMDLNOPTS_H__
 
+// default values
+#define DEFAULT_PIDFILE     "/tmp/loccorr.pid"
+#define DEFAULT_CONFFILE    "./loccorr.conf"
+#define DEFAULT_OUTPJPEG    "./outpWcrosses.jpg"
+#define DEFAULT_PUSIPORT    (4444)
+#define DEFAULT_IOPORT      (12345)
+#define DEFAULT_MAXAREA     (150000)
+#define DEFAULT_MINAREA     (400)
+#define DEFAULT_EROSIONS    (2)
+#define DEFAULT_DILATIONS   (2)
+#define DEFAULT_THROWPART   (0.5)
+#define DEFAULT_INTENSTHRES (0.01)
+#define DEFAULT_NAVERAGE    (5)
+#define DEFAULT_MAXUSTEPS   (16000)
+#define DEFAULT_MAXVSTEPS   (16000)
+#define DEFAULT_NEROSIONS   (3)
+#define DEFAULT_NDILATIONS  (3)
+
 /*
  * here are some typedef's for global data
  */
@@ -31,18 +49,25 @@ typedef struct{
     char *logfile;          // logging to this file
     char *inputname;        // input for monitor file or directory name
     char *logXYname;        // file to log XY coordinates of first point
-    double throwpart;       // fraction of black pixels to throw away when make histogram eq
+    char *configname;       // name of configuration file (default: ./loccorr.conf)
+    char *processing;       // =="pusirobo" to fix corrections with pusirobot drives
+    char *outputjpg;        // output jpeg name
+    int pusiservport;       // port of local pusirobot CAN server
     int equalize;           // make historam equalization of saved jpeg
-    int medradius;          // radius of median filter (r=1 -> 3x3, r=2 -> 5x5 etc.)
+//    int medradius;          // radius of median filter (r=1 -> 3x3, r=2 -> 5x5 etc.)
     int verb;               // logfile verbosity level
     int ndilations;         // amount of erosions (default: 2)
     int nerosions;          // amount of dilations (default: 2)
-    int minarea;            // minimal object pixels amount (default: 5)
+    int minarea;            // minimal object pixels amount (default: 400)
+    int maxarea;            // maximal object pixels amount (default: 150000)
+    int Naveraging;         // amount of images to average processing (min 2, max 25, default 5)
+    int xoff; int yoff;     // offset by X and Y axes
+    int width; int height;  // target width and height of image
+    int ioport;             // port for IO commands
+    double throwpart;       // fraction of black pixels to throw away when make histogram eq
     double intensthres;     // threshold by total object intensity when sorting = |I1-I2|/(I1+I2), default: 0.01
     double maxexp;          // max exposition time (ms)
     double minexp;          // min exposition time (ms)
-    int xoff; int yoff;     // offset by X and Y axes
-    int width; int height;  // target width and height of image
     double xtarget; double ytarget;// target point coordinates
 } glob_pars;
 

@@ -15,15 +15,15 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
+
 #pragma once
-#ifndef GRASSHOPPER_H__
-#define GRASSHOPPER_H__
+#ifndef __SOCKET_H__
+#define __SOCKET_H__
 
-#include "fits.h" // Image*
+// standard answers
+#define OK               "OK\n"
+#define FAIL             "FAILED\n"
 
-#define GRASSHOPPER_CAPT_NAME   "grasshopper"
+void openIOport(int portN);
 
-void disconnectGrasshopper();
-int capture_grasshopper(void (*process)(Image *));
-
-#endif // GRASSHOPPER_H__
+#endif // __SOCKET_H__

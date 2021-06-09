@@ -16,26 +16,41 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include <math.h>
 #include <signal.h>         // signal
 #include <string.h>         // strdup
 #include <usefull_macros.h>
 
 #include "cmdlnopts.h"
+#include "config.h"
+#include "grasshopper.h"
 #include "improc.h"
+#include "pusirobo.h"
+#include "socket.h"
 
 /**
  * We REDEFINE the default WEAK function of signal processing
  */
 void signals(int sig){
-    DBG("exit %d", sig);
     if(sig){
         signal(sig, SIG_IGN);
         DBG("Get signal %d, quit.\n", sig);
     }
-    closeXYlog();
-    if(GP && GP->pidfile) // remove unnesessary PID file
-        unlink(GP->pidfile);
+    DBG("exit %d", sig);
     LOGERR("Exit with status %d", sig);
+    stopwork = 1;
+    saveconf(NULL);
+    usleep(10000);
+    DBG("disconnectGrasshopper()");
+    disconnectGrasshopper();
+    DBG("pusi_disconnect()");
+    pusi_disconnect();
+    DBG("closeXYlog()");
+    closeXYlog();
+    if(GP && GP->pidfile){ // remove unnesessary PID file
+        DBG("unlink(GP->pidfile)");
+        unlink(GP->pidfile);
+    }
     exit(sig);
 }
 
@@ -88,16 +103,10 @@ int main(int argc, char *argv[]){
     if(GP->throwpart < 0. || GP->throwpart > 0.99){
         ERRX("Fraction of black pixels should be in [0., 0.99]");
     }
+    if(GP->Naveraging < 2 || GP->Naveraging > MAX_AVERAGING_ARRAY_SIZE)
+        ERRX("Averaging amount should be from 2 to 25");
     InputType tp = chk_inp(GP->inputname);
     if(tp == T_WRONG) ERRX("Enter correct image file or directory name");
-    check4running(self, GP->pidfile);
-    DBG("%s started, snippets library version is %s\n", self, sl_libversion());
-    free(self);
-    signal(SIGTERM, signals); // kill (-15) - quit
-    signal(SIGHUP, SIG_IGN);  // hup - ignore
-    signal(SIGINT, signals);  // ctrl+C - quit
-    signal(SIGQUIT, signals); // ctrl+\ - quit
-    signal(SIGTSTP, SIG_IGN); // ignore ctrl+Z
     if(GP->logfile){
         sl_loglevel lvl = LOGLEVEL_ERR; // default log level - errors
         int v = GP->verb;
@@ -107,10 +116,70 @@ int main(int argc, char *argv[]){
         OPENLOG(GP->logfile, lvl, 1);
         DBG("Opened log file @ level %d", lvl);
     }
+    int C = chkconfig(GP->configname);
+    if(!C){
+        LOGWARN("Wrong/absent configuration file");
+        WARNX("Wrong/absent configuration file");
+    }
+    // change `theconf` parameters to user values
+    {
+        if(GP->maxarea != DEFAULT_MAXAREA || theconf.maxarea == 0) theconf.maxarea = GP->maxarea;
+        if(GP->minarea != DEFAULT_MINAREA || theconf.minarea == 0) theconf.minarea = GP->minarea;
+        if(GP->xtarget > 0.) theconf.xtarget = GP->xtarget;
+        if(GP->ytarget > 0.) theconf.ytarget = GP->ytarget;
+        if(GP->nerosions != DEFAULT_EROSIONS || theconf.Nerosions == 0){
+            if(GP->nerosions < 1 || GP->nerosions > MAX_NEROS) ERRX("Amount of erosions should be from 1 to %d", MAX_NEROS);
+            theconf.Nerosions = GP->nerosions;
+        }
+        if(GP->ndilations != DEFAULT_DILATIONS || theconf.Ndilations == 0){
+            if(GP->ndilations < 1 || GP->ndilations > MAX_NDILAT) ERRX("Amount of erosions should be from 1 to %d", MAX_NDILAT);
+            theconf.Ndilations = GP->ndilations;
+        }
+        if(fabs(GP->throwpart - DEFAULT_THROWPART) > DBL_EPSILON || theconf.throwpart < DBL_EPSILON){
+            if(GP->throwpart < 0. || GP->throwpart > MAX_THROWPART) ERRX("'thworpart' should be from 0 to %g", MAX_THROWPART);
+            theconf.throwpart = GP->throwpart;
+        }
+        if(GP->xoff && GP->xoff < MAX_OFFSET) theconf.xoff = GP->xoff;
+        if(GP->yoff && GP->yoff < MAX_OFFSET) theconf.yoff = GP->yoff;
+        if(GP->width && GP->width < MAX_OFFSET) theconf.width = GP->width;
+        if(GP->height && GP->height < MAX_OFFSET) theconf.height = GP->height;
+        if(fabs(GP->minexp - EXPOS_MIN) > DBL_EPSILON || theconf.minexp < DBL_EPSILON){
+            if(GP->minexp < DBL_EPSILON || GP->minexp > EXPOS_MAX) ERRX("Minimal exposition should be > 0 and < %g", EXPOS_MAX);
+            theconf.minexp = GP->minexp;
+        }
+        if(fabs(GP->maxexp - EXPOS_MAX) > DBL_EPSILON || theconf.maxexp < theconf.minexp){
+            if(GP->maxexp < theconf.minexp) ERRX("Maximal exposition should be greater than minimal");
+            theconf.maxexp = GP->maxexp;
+        }
+        if(GP->equalize && theconf.equalize == 0) theconf.equalize = 1;
+        if(fabs(GP->intensthres - DEFAULT_INTENSTHRES) > DBL_EPSILON){
+            if(GP->intensthres < DBL_EPSILON || GP->intensthres > 1.-DBL_EPSILON) ERRX("'intensthres' should be from 0 to 1");
+            theconf.intensthres = GP->intensthres;
+        }
+        if(GP->Naveraging != DEFAULT_NAVERAGE || theconf.naverage < 1){
+            if(GP->Naveraging < 1 || GP->Naveraging > NAVER_MAX) ERRX("N images for averaging should be from 1 to %d", NAVER_MAX);
+            theconf.naverage = GP->Naveraging;
+        }
+        if(GP->pusiservport != DEFAULT_PUSIPORT || theconf.stpserverport == 0){
+            if(GP->pusiservport < 1 || GP->pusiservport > 65535) ERRX("Wrong steppers' server port: %d", GP->pusiservport);
+            theconf.stpserverport = GP->pusiservport;
+        }
+    }
+    setpostprocess(GP->processing);
+    check4running(self, GP->pidfile);
+    DBG("%s started, snippets library version is %s\n", self, sl_libversion());
+    free(self);
+    signal(SIGTERM, signals); // kill (-15) - quit
+    signal(SIGHUP, SIG_IGN);  // hup - ignore
+    signal(SIGINT, signals);  // ctrl+C - quit
+    signal(SIGQUIT, signals); // ctrl+\ - quit
+    signal(SIGTSTP, SIG_IGN); // ignore ctrl+Z
     if(GP->logXYname) openXYlog(GP->logXYname);
     LOGMSG("Start application...");
-    LOGDBG("xtag=%g, ytag=%g", GP->xtarget, GP->ytarget);
+    LOGDBG("xtag=%g, ytag=%g", theconf.xtarget, theconf.ytarget);
+    openIOport(GP->ioport);
     int p = process_input(tp, GP->inputname);
+    DBG("process_input=%d", p);
     // never reached
     signals(p); // clean everything
     return p;
