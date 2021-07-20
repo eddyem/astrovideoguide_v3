@@ -19,28 +19,35 @@
 #ifndef IMPROC_H__
 #define IMPROC_H__
 
+#include <stdatomic.h>
+
 #include "imagefile.h"
 
-// tolerance of deviations by X and Y axis
+// tolerance of deviations by X and Y axis (if sigmaX or sigmaY greater, values considered to be wrong)
 #define XY_TOLERANCE                (1.)
 // roundness parameter
-#define MINWH                       (0.2)
-#define MAXWH                       (5.)
+#define MINWH                       (0.5)
+#define MAXWH                       (2.)
 
 #define PUSIROBO_POSTPROC   "pusirobo"
 // how many frames will be averaged to count image deviation
 #define MAX_AVERAGING_ARRAY_SIZE        (25)
 
-extern int stopwork;
+extern volatile atomic_bool stopwork;
 extern double Xtarget, Ytarget;
+extern volatile atomic_ullong ImNumber;
+extern float exptime;
+//extern int autoExposition;
+extern char *(*stepstatus)(const char *messageid, char *buf, int buflen);
+extern char *(*setstepstatus)(const char *newstatus, char *buf, int buflen);
+extern char *(*movefocus)(const char *newstatus, char *buf, int buflen);
+extern char *(*imagedata)(const char *messageid, char *buf, int buflen);
 
 void process_file(Image *I);
 int  process_input(InputType tp, char *name);
 void openXYlog(const char *name);
 void closeXYlog();
 void setpostprocess(const char *name);
-extern char *(*stepstatus)(char *buf, int buflen);
-extern char *(*setstepstatus)(const char *newstatus, char *buf, int buflen);
-extern char *(*movefocus)(const char *newstatus, char *buf, int buflen);
+double getFramesPerS();
 
 #endif // IMPROC_H__

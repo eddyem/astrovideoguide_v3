@@ -48,8 +48,9 @@ configuration theconf = {
     .xtarget=-1,
     .ytarget=-1,
     .throwpart=DEFAULT_THROWPART,
-    .maxexp=EXPOS_MAX - DBL_EPSILON,
-    .minexp=EXPOS_MIN + DBL_EPSILON,
+    .maxexp=EXPOS_MAX + DBL_EPSILON,
+    .minexp=EXPOS_MIN - DBL_EPSILON,
+    .fixedexp=EXPOS_MIN,
     .intensthres=DEFAULT_INTENSTHRES
 };
 
@@ -73,6 +74,8 @@ static confparam parvals[] = {
      "subimage height"},
     {"equalize", PAR_INT, (void*)&theconf.equalize, 0, -DBL_EPSILON, 1.+DBL_EPSILON,
      "make histogram equalization"},
+    {"expmethod", PAR_INT, (void*)&theconf.expmethod, 0, -DBL_EPSILON, 1.+DBL_EPSILON,
+     "exposition method: 0 - auto, 1 - fixed"},
     {"naverage", PAR_INT, (void*)&theconf.naverage, 0, 1-DBL_EPSILON, NAVER_MAX+DBL_EPSILON,
      "calculate mean position by N images"},
     {"umax", PAR_INT, (void*)&theconf.maxUsteps, 0, MINSTEPS-DBL_EPSILON, MAXSTEPS+DBL_EPSILON,
@@ -99,8 +102,12 @@ static confparam parvals[] = {
      "minimal exposition time"},
     {"maxexp", PAR_DOUBLE, (void*)&theconf.maxexp, 0, -DBL_EPSILON, EXPOS_MAX+DBL_EPSILON,
      "maximal exposition time"},
+    {"fixedexp", PAR_DOUBLE, (void*)&theconf.fixedexp, 0, EXPOS_MIN-DBL_EPSILON, EXPOS_MAX+DBL_EPSILON,
+     "fixed (in manual mode) exposition time"},
     {"intensthres", PAR_DOUBLE, (void*)&theconf.intensthres, 0, DBL_EPSILON, 1.+DBL_EPSILON,
      "threshold by total object intensity when sorting = |I1-I2|/(I1+I2)"},
+    {"gain", PAR_DOUBLE, (void*)&theconf.gain, 0, GAIN_MIN-DBL_EPSILON, GAIN_MAX+DBL_EPSILON,
+     "gain value in manual mode"},
     {"starssort", PAR_INT, (void*)&theconf.starssort, 0, -DBL_EPSILON, 1.+DBL_EPSILON,
      "stars sorting algorithm: by distance from target (0) or by intensity (1)"},
     {NULL,  0,  NULL, 0, 0., 0., NULL}
@@ -363,17 +370,19 @@ int saveconf(const char *confname){
 }
 
 // return buffer filled with current configuration
-char *listconf(char *buf, int buflen){
+char *listconf(const char *messageid, char *buf, int buflen){
     int L;
     char *ptr = buf;
     confparam *par = parvals;
+    L = snprintf(ptr, buflen, "{ \"%s\": \"%s\", ", MESSAGEID, messageid);
+    buflen -= L; ptr += L;
     while(par->name && buflen > 0){
         switch(par->type){
             case PAR_INT:
-                L = snprintf(ptr, buflen, "%s=%d\n", par->name, *((int*)par->ptr));
+                L = snprintf(ptr, buflen, "\"%s\": %d", par->name, *((int*)par->ptr));
             break;
             case PAR_DOUBLE:
-                L = snprintf(ptr, buflen, "%s=%.3f\n", par->name, *((double*)par->ptr));
+                L = snprintf(ptr, buflen, "\"%s\": %.3f", par->name, *((double*)par->ptr));
             break;
             default:
                 L = 0;
@@ -384,6 +393,11 @@ char *listconf(char *buf, int buflen){
         }else{
             buf[buflen-1] = 0; break;
         }
+        if(par->name){ // put comma
+            L = snprintf(ptr, buflen, ", ");
+            if(L > -1){buflen -= L; ptr += L;}
+        }
     }
+    snprintf(ptr, buflen, " }\n");
     return buf;
 }

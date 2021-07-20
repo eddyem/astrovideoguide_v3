@@ -28,19 +28,30 @@
 #define COEFMAX         (10000)
 // area
 #define MINAREA         (4)
-#define MAXAREA         (250000)
+#define MAXAREA         (2500000)
 #define MAX_NDILAT      (100)
 #define MAX_NEROS       (100)
 #define MAX_THROWPART   (0.9)
 #define MAX_OFFSET      (10000)
-#define EXPOS_MIN       (0.001)
-#define EXPOS_MAX       (500.)
+// min/max exposition in ms
+#define EXPOS_MIN       (0.1)
+#define EXPOS_MAX       (4000.)
+#define GAIN_MIN        (0.)
+#define GAIN_MAX        (20.)
+// max average images counter
 #define NAVER_MAX       (50)
 // coefficients to convert dx,dy to du,dv
 #define KUVMIN           (-5000.)
 #define KUVMAX           (5000.)
 // default coefficient for corrections (move to Kdu, Kdv instead of du, dv)
 #define KCORR           (0.9)
+
+// exposition methods: 0 - auto, 1 - fixed
+#define EXPAUTO         (0)
+#define EXPMANUAL       (1)
+
+// messageID field name
+#define MESSAGEID       "messageid"
 
 typedef struct{
     int maxUsteps;      // max amount of steps by both axes
@@ -57,14 +68,17 @@ typedef struct{
     int naverage;       // amount of images for average calculation (>1)
     int stpserverport;  // steppers' server port
     int starssort;      // stars sorting algorithm: by distance from target (0) or by intensity (1)
+    int expmethod;      // 0 - auto, 1 - fixed
     // dU = Kxu*dX + Kyu*dY; dV = Kxv*dX + Kyv*dY
     double Kxu; double Kyu;
     double Kxv; double Kyv;
-    double xtarget;     // target (center) values
+    double xtarget;     // target (center) values (in absolute coordinates! screen coords = target - offset)
     double ytarget;
     double throwpart;   // part of values to throw avay @ histogram equalisation
     double maxexp;      // minimal and maximal exposition (in ms)
     double minexp;
+    double fixedexp;    // exptime in manual mode
+    double gain;        // gain value in manual mode
     double intensthres; // threshold for stars intensity comparison: fabs(Ia-Ib)/(Ia+Ib) > thres -> stars differs
 } configuration;
 
@@ -99,6 +113,6 @@ int chkconfig(const char *confname);
 int saveconf(const char *confname);
 char *get_keyval(const char *pair, char value[128]);
 confparam *chk_keyval(const char *key, const char *val, key_value *result);
-char *listconf(char *buf, int buflen);
+char *listconf(const char *messageid, char *buf, int buflen);
 
 #endif // CONFIG_H__

@@ -34,19 +34,27 @@
 #include "median.h"
 #include "pusirobo.h"
 
-static FILE *fXYlog = NULL;
+float exptime = 10.; // GLOBAL: exposition time in milliseconds
+volatile atomic_ullong ImNumber = 0; // GLOBAL: counter of processed images
+volatile atomic_bool stopwork = FALSE; // GLOBAL: suicide
+//int autoExposition = 1; // GLOBAL: ==1 if exposition calculation is auto
 
+// GLOBAL: function to get stepper server status
+char *(*stepstatus)(const char *messageid, char *buf, int buflen) = NULL;
+// GLOBAL: set new status
+char *(*setstepstatus)(const char *newstatus, char *buf, int buflen) = NULL;
+// GLOBAL: move focus
+char *(*movefocus)(const char *newstatus, char *buf, int buflen) = NULL;
+// GLOBAL: get image information
+char *(*imagedata)(const char *messageid, char *buf, int buflen);
+
+static FILE *fXYlog = NULL;
 static double tstart = 0.; // time of logging start
-int stopwork = 0;
+static double FPS = 0.; // frames per second
+
 
 // function to process calculated corrections
 static void (*proc_corr)(double, double, int) = NULL;
-// function to get stepper server status
-char *(*stepstatus)(char *buf, int buflen) = NULL;
-// set new status
-char *(*setstepstatus)(const char *newstatus, char *buf, int buflen) = NULL;
-// move focus
-char *(*movefocus)(const char *newstatus, char *buf, int buflen) = NULL;
 
 typedef struct{
     uint32_t area;      // object area in pixels
@@ -65,6 +73,7 @@ typedef enum{
 
 static postproc_type postprocess = PROCESS_NONE;
 
+/*
 static bool save_fits(Image *I, const char *name){
     char fname[PATH_MAX];
     snprintf(fname, PATH_MAX, name);
@@ -75,14 +84,15 @@ static bool save_fits(Image *I, const char *name){
     unlink(name);
     return FITS_write(name, I);
 }
-
+*/
+/*
 static void savebin(uint8_t *b, int W, int H, const char *name){
     Image *I = bin2Im(b, W, H);
     if(I){
         save_fits(I, name);
         Image_free(&I);
     }
-}
+}*/
 
 // functions for Qsort
 static int compIntens(const void *a, const void *b){ // compare by intensity
@@ -97,8 +107,9 @@ static int compIntens(const void *a, const void *b){ // compare by intensity
 static int compDist(const void *a, const void *b){ // compare by distanse from target
     const object *oa = (const object*)a;
     const object *ob = (const object*)b;
-    double  xa = oa->xc - theconf.xtarget, xb = ob->xc - theconf.xtarget,
-            ya = oa->yc - theconf.ytarget, yb = ob->yc - theconf.ytarget;
+    double xtg = theconf.xtarget - theconf.xoff, ytg = theconf.ytarget - theconf.yoff;
+    double  xa = oa->xc - xtg, xb = ob->xc - xtg,
+            ya = oa->yc - ytg, yb = ob->yc - ytg;
     double r2a = xa*xa + ya*ya;
     double r2b = xb*xb + yb*yb;
     return (r2a < r2b) ? -1 : 1;
@@ -122,7 +133,7 @@ static void getDeviation(object *curobj){
                 dtime() - tstart, curobj->xc, curobj->yc,
                 curobj->xsigma, curobj->ysigma, curobj->WdivH);
     }
-    DBG("counter = %d", counter);
+    //DBG("counter = %d", counter);
     if(++counter != theconf.naverage){
         goto process_corrections;
     }
@@ -142,7 +153,7 @@ static void getDeviation(object *curobj){
     if(fXYlog) fprintf(fXYlog, "%.1f\t%.1f\t%.1f\t%.1f", xx, yy, Sx, Sy);
 process_corrections:
     if(proc_corr){
-        if(Sx > 1. || Sy > 1.){
+        if(Sx > XY_TOLERANCE || Sy > XY_TOLERANCE){
             LOGDBG("Bad value - not process"); // don't run processing for bad data
         }else
             proc_corr(xx, yy, averflag);
@@ -151,12 +162,15 @@ process_corrections:
 }
 
 void process_file(Image *I){
+    static double lastTproc = 0.;
+/*
 #ifdef EBUG
     double t0 = dtime(), tlast = t0;
 #define DELTA(p) do{double t = dtime(); DBG("---> %s @ %gms (delta: %gms)", p, (t-t0)*1e3, (t-tlast)*1e3); tlast = t;}while(0)
 #else
+*/
 #define DELTA(x)
-#endif
+//#endif
     // I - original image
     // mean - local mean
     // std  - local STD
@@ -168,28 +182,28 @@ void process_file(Image *I){
     }
     int W = I->width, H = I->height;
     if(!I->dtype) I->dtype = FLOAT_IMG;
-    save_fits(I, "fitsout.fits");
-    DELTA("Save original");
+    //save_fits(I, "fitsout.fits");
+    //DELTA("Save original");
     Imtype bk;
     if(calc_background(I, &bk)){
-        DBG("backgr = %g", bk);
+        //DBG("backgr = %g", bk);
         DELTA("Got background");
         uint8_t *ibin = Im2bin(I, bk);
         DELTA("Made binary");
         if(ibin){
-            savebin(ibin, W, H, "binary.fits");
-            DELTA("save binary.fits");
+            //savebin(ibin, W, H, "binary.fits");
+            //DELTA("save binary.fits");
             uint8_t *er = erosionN(ibin, W, H, theconf.Nerosions);
             FREE(ibin);
             DELTA("Erosion");
-            savebin(er, W, H, "erosion.fits");
-            DELTA("Save erosion");
+            //savebin(er, W, H, "erosion.fits");
+            //DELTA("Save erosion");
             uint8_t *opn = dilationN(er, W, H, theconf.Ndilations);
             FREE(er);
             DELTA("Opening");
-            savebin(opn, W, H, "opening.fits");
-            DELTA("Save opening");
-            ConnComps *cc;
+            //savebin(opn, W, H, "opening.fits");
+            //DELTA("Save opening");
+            ConnComps *cc = NULL;
             size_t *S = cclabel4(opn, W, H, &cc);
             FREE(opn);
             if(cc->Nobj > 1){
@@ -245,8 +259,8 @@ void process_file(Image *I){
                     printf("%6d\t%6d\t%6.1f\t%6.1f\t%6.1f\t%6.1f\t%6.1f\t%6.1f\n",
                            i, o->area, 20.-1.0857*log(o->Isum), o->WdivH, o->xc, o->yc, o->xsigma, o->ysigma);
                 }
-                getDeviation(Objects);
-                { // prepare image
+                getDeviation(Objects); // calculate dX/dY and process corrections
+                { // prepare image and save jpeg
                     uint8_t *outp = NULL;
                     if(theconf.equalize)
                         outp = equalize(I, 3, theconf.throwpart);
@@ -262,16 +276,29 @@ void process_file(Image *I){
                             Pattern_draw3(&i3, cross, Objects[i].xc, H-Objects[i].yc, C_R);
                         // Pattern_free(&cross); don't free - static variable!
                     }
-                    stbi_write_jpg(GP->outputjpg, I->width, I->height, 3, outp, 95);
+                    char *tmpnm = MALLOC(char, strlen(GP->outputjpg) + 5);
+                    sprintf(tmpnm, "%s-tmp", GP->outputjpg);
+                    if(stbi_write_jpg(tmpnm, I->width, I->height, 3, outp, 95)){
+                        if(rename(tmpnm, GP->outputjpg)){
+                            WARN("rename()");
+                            LOGWARN("can't save %s", GP->outputjpg);
+                        }
+                    }
+                    FREE(tmpnm);
+                    ++ImNumber;
+                    if(lastTproc > 1.) FPS = 1. / (dtime() - lastTproc);
+                    lastTproc = dtime();
                     FREE(outp);
                 }
-                FREE(cc);
                 FREE(Objects);
+                /*
                 Image *c = ST2Im(S, W, H);
                 DELTA("conv size_t -> Ima");
                 save_fits(c, "size_t.fits");
                 Image_free(&c);
                 DELTA("Save size_t");
+                */
+                /*
                 Image *obj = Image_sim(I);
                 OMP_FOR()
                 for(int y = 0; y < H; ++y){
@@ -286,17 +313,41 @@ void process_file(Image *I){
                 Image_minmax(obj);
                 save_fits(obj, "object.fits");
                 Image_free(&obj);
-            }
+                */
+            }else Image_write_jpg(I, GP->outputjpg, theconf.equalize);
             FREE(S);
+            FREE(cc);
         }
     }
     DELTA("End");
 }
 
+static char *localimages(const char *messageid, int isdir, char *buf, int buflen){
+    static char *impath = NULL;
+    if(!impath){
+        if(!realpath(GP->outputjpg, impath)) impath = strdup(GP->outputjpg);
+    }
+    snprintf(buf, buflen, "{ \"%s\": \"%s\", \"camstatus\": \"watch %s\", \"impath\": \"%s\"}",
+             MESSAGEID, messageid, isdir ? "directory" : "file", impath);
+    return buf;
+}
+static char *watchdr(const char *messageid, char *buf, int buflen){
+    return localimages(messageid, 1, buf, buflen);
+}
+static char *watchfl(const char *messageid, char *buf, int buflen){
+    return localimages(messageid, 0, buf, buflen);
+}
+
 int process_input(InputType tp, char *name){
-    DBG("process_input(%d, %s)", tp, name);
-    if(tp == T_DIRECTORY) return watch_directory(name, process_file);
-    else if(tp == T_CAPT_GRASSHOPPER) return capture_grasshopper(process_file);
+    //DBG("process_input(%d, %s)", tp, name);
+    if(tp == T_DIRECTORY){
+        imagedata = watchdr;
+        return watch_directory(name, process_file);
+    }else if(tp == T_CAPT_GRASSHOPPER){
+        imagedata = gsimagestatus;
+        return capture_grasshopper(process_file);
+    }
+    imagedata = watchfl;
     return watch_file(name, process_file);
 }
 
@@ -348,3 +399,5 @@ void setpostprocess(const char *name){
         LOGERR("Unknown postprocess \"%s\"", name);
     }
 }
+
+double getFramesPerS(){ return FPS; }

@@ -21,6 +21,7 @@
 #include <float.h> // FLT_EPSILON
 #include <math.h>
 #include <stdio.h>
+#include <string.h>
 #include <usefull_macros.h>
 
 #include "cmdlnopts.h"
@@ -33,7 +34,6 @@
 static fc2Context context;
 static fc2PGRGuid guid;
 static fc2Error err = FC2_ERROR_OK;
-static float exptime = 10.; // exposition time in milliseconds
 static float gain = 0.;
 
 #define FC2FN(fn, ...) do{err = FC2_ERROR_OK; if(FC2_ERROR_OK != (err=fn(context __VA_OPT__(,) __VA_ARGS__))){ \
@@ -42,7 +42,6 @@ static float gain = 0.;
 /**
  * @brief setfloat - set absolute property value (float)
  * @param t        - type of property
- * @param context  - initialized context
  * @param f        - new value
  * @return 1 if all OK
  */
@@ -155,8 +154,8 @@ static int changeformat(){
 }
 
 static int connect(){
-    FNAME();
     if(connected) return 1;
+    FNAME();
     unsigned int numCameras = 0;
     if(FC2_ERROR_OK != (err = fc2CreateContext(&context))){
         WARNX("fc2CreateContext(): %s", fc2ErrorToDescription(err));
@@ -188,29 +187,32 @@ static int connect(){
 
 static int GrabImage(fc2Image *convertedImage){
     FNAME();
+    int ret = 0;
     fc2Image rawImage;
     // start capture
     FC2FN(fc2StartCapture);
     err = fc2CreateImage(&rawImage);
     if(err != FC2_ERROR_OK){
         WARNX("Error in fc2CreateImage: %s", fc2ErrorToDescription(err));
-        return 0;
+        goto rtn;
     }
     // Retrieve the image
     err = fc2RetrieveBuffer(context, &rawImage);
     if(err != FC2_ERROR_OK){
         WARNX("Error in fc2RetrieveBuffer: %s", fc2ErrorToDescription(err));
-        return 0;
+        goto rtn;
     }
     // Convert image to gray
     err = fc2ConvertImageTo(FC2_PIXEL_FORMAT_MONO8, &rawImage, convertedImage);
     if(err != FC2_ERROR_OK){
         WARNX("Error in fc2ConvertImageTo: %s", fc2ErrorToDescription(err));
-        return 0;
+        goto rtn;
     }
+    ret = 1;
+rtn:
     fc2StopCapture(context);
     fc2DestroyImage(&rawImage);
-    return 1;
+    return ret;
 }
 
 static void calcexpgain(float newexp){
@@ -241,6 +243,15 @@ static void calcexpgain(float newexp){
 
 //convertedImage.pData, convertedImage.cols, convertedImage.rows, convertedImage.stride
 static void recalcexp(fc2Image *img){
+    // check if user changed exposition values
+    if(exptime < theconf.minexp){
+        exptime = theconf.minexp;
+        return;
+    }
+    else if(exptime > theconf.maxexp){
+        exptime = theconf.maxexp;
+        return;
+    }
     uint8_t *data = img->pData;
     int W = img->cols, H = img->rows, S = img->stride;
     int histogram[256] = {0};
@@ -271,15 +282,19 @@ int capture_grasshopper(void (*process)(Image*)){
     FNAME();
     static float oldexptime = 0.;
     static float oldgain = -1.;
+    Image *oIma = NULL;
     fc2Image convertedImage;
     err = fc2CreateImage(&convertedImage);
     if(err != FC2_ERROR_OK){
         WARNX("capture_grasshopper(): can't create image, %s", fc2ErrorToDescription(err));
+        disconnectGrasshopper();
         return 0;
     }
-    Image *oIma = NULL;
     while(1){
-        if(stopwork) return 1;
+        if(stopwork){
+            DBG("STOP");
+            break;
+        }
         if(!connect()){ // wait until camera be powered on
             DBG("Disconnected");
             sleep(1);
@@ -291,8 +306,8 @@ int capture_grasshopper(void (*process)(Image*)){
                 oldexptime = exptime;
             }else{
                 WARNX("Can't change exposition time to %gms", exptime);
-                disconnectGrasshopper();
-                continue;
+                //disconnectGrasshopper();
+                //continue;
             }
         }
         if(fabs(oldgain - gain) > FLT_EPSILON){ // change gain
@@ -301,8 +316,8 @@ int capture_grasshopper(void (*process)(Image*)){
                 oldgain = gain;
             }else{
                 WARNX("Can't change gain to %g", gain);
-                disconnectGrasshopper();
-                continue;
+                //disconnectGrasshopper();
+                //continue;
             }
         }
         if(!GrabImage(&convertedImage)){
@@ -310,15 +325,42 @@ int capture_grasshopper(void (*process)(Image*)){
             disconnectGrasshopper();
             continue;
         }
-        if(!process) continue;
-        recalcexp(&convertedImage);
+        if(theconf.expmethod == EXPAUTO) recalcexp(&convertedImage);
+        else{
+            if(fabs(theconf.fixedexp - exptime) > FLT_EPSILON)
+                exptime = theconf.fixedexp;
+            if(fabs(theconf.gain - gain) > FLT_EPSILON)
+                gain = theconf.gain;
+        }
+        if(!process){
+            continue;
+        }
         oIma = u8toImage(convertedImage.pData, convertedImage.cols, convertedImage.rows, convertedImage.stride);
         if(oIma){
             process(oIma);
+            FREE(oIma->data);
             FREE(oIma);
         }
     }
     fc2DestroyImage(&convertedImage);
-    fc2DestroyContext(context);
+    disconnectGrasshopper();
+    DBG("GRASSHOPPER: out");
     return 1;
+}
+
+// return JSON with image status
+char *gsimagestatus(const char *messageid, char *buf, int buflen){
+    static char *impath = NULL;
+    if(!impath){
+        if(!(impath = realpath(GP->outputjpg, impath))){
+            WARN("realpath() (%s)", impath);
+            impath = strdup(GP->outputjpg);
+        }
+        DBG("path: %s", impath);
+    }
+    snprintf(buf, buflen, "{ \"%s\": \"%s\", \"camstatus\": \"%sconnected\", \"impath\": \"%s\", \"imctr\": %llu, "
+             "\"fps\": %.3f, \"expmethod\": \"%s\", \"exposition\": %g, \"gain\": %g }\n",
+             MESSAGEID, messageid, connected ? "" : "dis", impath, ImNumber, getFramesPerS(),
+             (theconf.expmethod == EXPAUTO) ? "auto" : "manual", exptime, gain);
+    return buf;
 }

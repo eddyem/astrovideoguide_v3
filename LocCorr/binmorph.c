@@ -62,7 +62,7 @@ static void morph_init(){
  * @return allocated memory area with converted input image
  */
 uint8_t *filter4(uint8_t *image, int W, int H){
-    FNAME();
+    //FNAME();
     if(W < MINWIDTH || H < MINHEIGHT) return NULL;
     uint8_t *ret = MALLOC(uint8_t, W*H);
     int W0 = (W + 7) / 8; // width in bytes
@@ -94,7 +94,7 @@ uint8_t *filter4(uint8_t *image, int W, int H){
  * @return allocated memory area with converted input image
  */
 uint8_t *filter8(uint8_t *image, int W, int H){
-    FNAME();
+    //FNAME();
     if(W < MINWIDTH || H < MINHEIGHT) return NULL;
     uint8_t *ret = MALLOC(uint8_t, W*H);
     int W0 = (W + 7) / 8; // width in bytes
@@ -123,7 +123,7 @@ uint8_t *filter8(uint8_t *image, int W, int H){
  * @return allocated memory area with dilation of input image
  */
 uint8_t *dilation(uint8_t *image, int W, int H){
-    FNAME();
+    //FNAME();
     if(W < MINWIDTH || H < MINHEIGHT) return NULL;
     int W0 = (W + 7) / 8; // width in bytes
     int w = W0-1, h = H-1, rest = 7 - (W - w*8);
@@ -156,14 +156,14 @@ uint8_t *dilation(uint8_t *image, int W, int H){
  * @return allocated memory area with erosion of input image
  */
 uint8_t *erosion(uint8_t *image, int W, int H){
-    FNAME();
+    //FNAME();
     if(W < MINWIDTH || H < MINHEIGHT) return NULL;
     if(!ER) morph_init();
     int W0 = (W + 7) / 8; // width in bytes
     int w = W0-1, h = H-1, rest = 8 - (W - w*8);
     uint8_t lastmask = ~(1<<rest);
     uint8_t *ret = MALLOC(uint8_t, W0*H);
-    DBG("rest=%d, mask:0x%x", rest, lastmask);
+    //DBG("rest=%d, mask:0x%x", rest, lastmask);
     OMP_FOR()
     for(int y = 1; y < h; y++){ // reset first & last rows of image
         uint8_t *iptr = &image[W0*y];
@@ -189,7 +189,7 @@ uint8_t *erosion(uint8_t *image, int W, int H){
 
 // Make erosion N times
 uint8_t *erosionN(uint8_t *image, int W, int H, int N){
-    FNAME();
+    //FNAME();
     if(W < 1 || H < 1) return NULL;
     if(W < MINWIDTH || H < MINHEIGHT || N < 1){
         uint8_t *copy = MALLOC(uint8_t, W*H);
@@ -206,7 +206,7 @@ uint8_t *erosionN(uint8_t *image, int W, int H, int N){
 }
 // Make dilation N times
 uint8_t *dilationN(uint8_t *image, int W, int H, int N){
-    FNAME();
+    //FNAME();
     if(W < 1 || H < 1) return NULL;
     if(W < MINWIDTH || H < MINHEIGHT || N < 1){
         uint8_t *copy = MALLOC(uint8_t, W*H);
@@ -224,7 +224,7 @@ uint8_t *dilationN(uint8_t *image, int W, int H, int N){
 
 // Ntimes opening
 uint8_t *openingN(uint8_t *image, int W, int H, int N){
-    FNAME();
+    //FNAME();
     if(W < MINWIDTH || H < MINHEIGHT || N < 1) return NULL;
     uint8_t *er = erosionN(image, W, H, N);
     uint8_t *op = dilationN(er, W, H, N);
@@ -234,7 +234,7 @@ uint8_t *openingN(uint8_t *image, int W, int H, int N){
 
 // Ntimes closing
 uint8_t *closingN(uint8_t *image, int W, int H, int N){
-    FNAME();
+    //FNAME();
     if(W < MINWIDTH || H < MINHEIGHT || N < 1) return NULL;
     uint8_t *di = dilationN(image, W, H, N);
     uint8_t *cl = erosionN(di, W, H, N);
@@ -244,7 +244,7 @@ uint8_t *closingN(uint8_t *image, int W, int H, int N){
 
 // top hat operation: image - opening(image)
 uint8_t *topHat(uint8_t *image, int W, int H, int N){
-    FNAME();
+    //FNAME();
     if(W < MINWIDTH || H < MINHEIGHT || N < 1) return NULL;
     uint8_t *op = openingN(image, W, H, N);
     int W0 = (W + 7) / 8; // width in bytes
@@ -257,7 +257,7 @@ uint8_t *topHat(uint8_t *image, int W, int H, int N){
 
 // bottom hat operation: closing(image) - image
 uint8_t *botHat(uint8_t *image, int W, int H, int N){
-    FNAME();
+    //FNAME();
     if(W < MINWIDTH || H < MINHEIGHT || N < 1) return NULL;
     uint8_t *op = closingN(image, W, H, N);
     int W0 = (W + 7) / 8; // width in bytes
@@ -358,10 +358,10 @@ size_t *cclabel4(uint8_t *Img, int W, int H, ConnComps **CC){
     }
     if(W < MINWIDTH || H < MINHEIGHT) return NULL;
     uint8_t *f = filter4(Img, W, H); // remove all non 4-connected pixels
-    DBG("convert to size_t");
+    //DBG("convert to size_t");
     size_t *labels = bin2ST(f, W, H);
     FREE(f);
-    DBG("Calculate");
+    //DBG("Calculate");
     size_t Nmax = W*H/4; // max number of 4-connected labels
     assoc = MALLOC(size_t, Nmax); // allocate memory for "remark" array
     size_t last_assoc_idx = 1; // last index filled in assoc array
@@ -416,7 +416,7 @@ size_t *cclabel4(uint8_t *Img, int W, int H, ConnComps **CC){
         indexes[i] = cidx++;
     }
     // cidx now is amount of detected objects + 1 - size of output array (0th idx is not used)
-    DBG("amount after rebuild: %zd", cidx-1);
+    //DBG("amount after rebuild: %zd", cidx-1);
     #ifdef TESTMSGS
     printf("\n\n\nI\tASS[I]\tIDX[I]\n");
     for(size_t i = 1; i < last_assoc_idx; ++i)

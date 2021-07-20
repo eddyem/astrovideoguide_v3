@@ -45,7 +45,7 @@
 #define registerFocus       "register F 0x583 stepper"
 #define setUspeed           "mesg U maxspeed 12800"
 #define setVspeed           "mesg V maxspeed 12800"
-#define setFspeed           "mesg F maxspeed 1600"
+#define setFspeed           "mesg F maxspeed 12800"
 #define Urelsteps           "mesg U relmove "
 #define Vrelsteps           "mesg V relmove "
 #define Fabssteps           "mesg F absmove "
@@ -93,6 +93,7 @@ static int sockfd = -1; // server file descriptor
 
 // current steps counters (zero at the middle)
 static int Uposition = 0, Vposition = 0, Fposition = 0;
+static uint8_t fixerr = 0; // ==1 if can't fixed
 
 void pusi_disconnect(){
     if(sockfd > -1) close(sockfd);
@@ -353,7 +354,7 @@ static int move_motor(const char *movecmd, int s/*, int *counter*/){
 static void process_movetomiddle_stage(){
     switch(sstatus){
         case SETUP_INIT: // initial moving
-            if(moveU(-UVmaxsteps) && moveV(-UVmaxsteps) && moveF(-Fmaxsteps*2))
+            if(moveU(-UVmaxsteps) && moveV(-UVmaxsteps) && moveF(-Fmaxsteps))
                 sstatus = SETUP_WAITUV0;
         break;
         case SETUP_WAITUV0: // wait for both coordinates moving to zero
@@ -501,8 +502,8 @@ static int process_targetstage(double X, double Y){
         DBG("nhit = %d", nhit);
         return FALSE;
     }
-    theconf.xtarget = X;
-    theconf.ytarget = Y;
+    theconf.xtarget = X + theconf.xoff;
+    theconf.ytarget = Y + theconf.yoff;
     DBG("Got target coordinates: (%.1f, %.1f)", X, Y);
     saveconf(FALSE);
     nhit = 0; xprev = 0.; yprev = 0.;
@@ -550,13 +551,19 @@ mesg F relmove 32000
  * This function called from improc.c each time the corrections calculated (ONLY IF Xtarget/Ytarget > -1)
  */
 void pusi_process_corrections(double X, double Y, int aver){
-    DBG("got centroid data: %g, %g", X, Y);
-    double xdev = X - theconf.xtarget, ydev = Y - theconf.ytarget;
+    //DBG("got centroid data: %g, %g", X, Y);
+    static int first = TRUE;
+    double xtg = theconf.xtarget - theconf.xoff, ytg = theconf.ytarget - theconf.yoff;
+    double xdev = X - xtg, ydev = Y - ytg;
+    if(state != PUSI_DISCONN) first = TRUE;
     switch(state){
         case PUSI_DISCONN:
             if(!pusi_connect()){
                 WARN("Can't reconnect");
+            }
+            if(first){
                 LOGWARN("Can't reconnect");
+                first = FALSE;
             }
         break;
         case PUSI_SETUP: // setup axes (before this state set Xtarget/Ytarget in improc.c)
@@ -581,9 +588,10 @@ void pusi_process_corrections(double X, double Y, int aver){
                        Uposition, Vposition, xdev, ydev);
                 if(!try2correct(xdev, ydev)){
                     LOGWARN("failed to correct");
+                    fixerr = 1;
                     // TODO: do something here
                     DBG("FAILED");
-                }
+                } else fixerr = 0;
             }
         break;
         default: // PUSI_RELAX
@@ -614,11 +622,11 @@ pusistate pusi_getstate(){
 
 // get current status
 // return JSON string with different parameters
-char *pusi_status(char *buf, int buflen){
+char *pusi_status(const char *messageid, char *buf, int buflen){
     int l;
     char *bptr = buf;
     const char *s = NULL, *stage = NULL;
-    l = snprintf(bptr, buflen, "{ \"status\": ");
+    l = snprintf(bptr, buflen, "{ \"%s\": \"%s\", \"status\": ", MESSAGEID, messageid);
     buflen -= l; bptr += l;
     switch(state){
         case PUSI_DISCONN:
@@ -664,7 +672,7 @@ char *pusi_status(char *buf, int buflen){
             l = snprintf(bptr, buflen, "\"findtarget\"");
         break;
         case PUSI_FIX:
-            l = snprintf(bptr, buflen, "\"fixing\"");
+            l = snprintf(bptr, buflen, "\"%s\"", fixerr ? "fixoutofrange" : "fixing");
         break;
         default:
             l = snprintf(bptr, buflen, "\"unknown\"");
@@ -676,11 +684,13 @@ char *pusi_status(char *buf, int buflen){
         const char *motors[] = {"Umotor", "Vmotor", "Fmotor"};
         const char *statuses[] = {Ustatus, Vstatus, Fstatus};
         int *pos[] = {&Uposition, &Vposition, &Fposition};
+        const int maxpos[] = {UVmaxsteps, UVmaxsteps, Fmaxsteps};
+        const int minpos[] = {-UVmaxsteps, -UVmaxsteps, 0};
         for(int i = 0; i < 3; ++i){
             const char *stat = "moving";
             if(moving_finished(statuses[i], pos[i])) stat = "stopping";
-            l = snprintf(bptr, buflen, "\"%s\": { \"status\": \"%s\", \"position\": %d }%s",
-                         motors[i], stat, *pos[i], (i==2)?"":", ");
+            l = snprintf(bptr, buflen, "\"%s\": { \"status\": \"%s\", \"position\": %d, \"minpos\": %d, \"maxpos\": %d }%s",
+                         motors[i], stat, *pos[i], minpos[i], maxpos[i], (i==2)?"":", ");
             buflen -= l; bptr += l;
         }
     }
@@ -717,7 +727,10 @@ char *set_pusistatus(const char *newstatus, char *buf, int buflen){
         if(pusi_setstate(newstate)){
             snprintf(buf, buflen, OK);
             return buf;
-        }else return pusi_status(buf, buflen);
+        }else{
+            snprintf(buf, buflen, FAIL);
+            return buf;
+        }
     }
     int L = snprintf(buf, buflen, "status '%s' undefined, allow: ", newstatus);
     char *ptr = buf;
@@ -734,12 +747,12 @@ char *set_pusistatus(const char *newstatus, char *buf, int buflen){
 // change focus
 char *set_pfocus(const char *newstatus, char *buf, int buflen){
     if(!moving_finished(Fstatus, &Fposition)){
-        snprintf(buf, buflen, "moving\n");
+        snprintf(buf, buflen, FAIL);
         return buf;
     }
     int newval = atoi(newstatus);
     if(newval < 0 || newval > Fmaxsteps){
-        snprintf(buf, buflen, "Bad value: %d", newval);
+        snprintf(buf, buflen, FAIL);
     }else{
         if(!setF(newval)) snprintf(buf, buflen, FAIL);
         else snprintf(buf, buflen, OK);

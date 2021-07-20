@@ -16,8 +16,9 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+
 #include <arpa/inet.h>  // inet_ntop
-#include <sys/ioctl.h>
+#include <libgen.h>     // basename
 #include <limits.h>     // INT_xxx
 #include <netdb.h>      // addrinfo
 #include <poll.h>
@@ -25,10 +26,12 @@
 #include <signal.h>     // pthread_kill
 #include <stdio.h>
 #include <string.h>
+#include <sys/ioctl.h>
 #include <sys/syscall.h> // syscall
 #include <unistd.h>     // daemon
 #include <usefull_macros.h>
 
+#include "cmdlnopts.h"
 #include "config.h"
 #include "improc.h"
 #include "socket.h"
@@ -40,10 +43,15 @@
 // Max amount of connections
 #define BACKLOG     (10)
 
+/*
+TODO3: add 'FAIL error text' if not OK and instead all "wrong message"
+*/
+
+
 // additional commands list - getters
 typedef struct{
     const char *command;
-    char *(*handler)(char *buf, int buflen);
+    char *(*handler)(const char *messageid, char *buf, int buflen);
     const char *help;
 } getter;
 // setters
@@ -53,26 +61,32 @@ typedef struct{
     const char *help;
 } setter;
 
-static char *helpmsg(char *buf, int buflen);
-static char *stepperstatus(char *buf, int buflen);
+static char *helpmsg(const char *messageid, char *buf, int buflen);
+static char *stepperstatus(const char *messageid, char *buf, int buflen);
+static char *getimagedata(const char *messageid, char *buf, int buflen);
 static getter getterHandlers[] = {
     {"help", helpmsg, "List avaiable commands"},
     {"settings", listconf, "List current configuration"},
-    {"steppers", stepperstatus, "Get status of steppers' server"},
+    {"canbus", stepperstatus, "Get status of CAN bus server"},
+    {"imdata", getimagedata, "Get image data (status, path, FPS, counter)"},
     {NULL, NULL, NULL}
 };
 
 static char *setstepperstate(const char *state, char *buf, int buflen);
 static char *setfocusstate(const char *state, char *buf, int buflen);
+//static char *setexposition(const char *expos, char *buf, int buflen);
+//static char *setexposmethod(const char *expos, char *buf, int buflen);
 static setter setterHandlers[] = {
     {"stpstate", setstepperstate, "Set given steppers' server state"},
     {"focus", setfocusstate, "Move focus to given value"},
+//    {"exptime", setexposition, "Set exposition to new value (s)"},
+//    {"expmethod", setexposmethod, "Set exposition method (\"manual\"/\"auto\")"},
     {NULL, NULL, NULL}
 };
 
 /**************** functions to process commands ****************/
 // getters
-static char *helpmsg(char *buf, int buflen){
+static char *helpmsg(_U_ const char *messageid, char *buf, int buflen){
     if(get_cmd_list(buf, buflen)){
         int l = strlen(buf), L = buflen - l;
         char *ptr = buf + l;
@@ -94,9 +108,14 @@ static char *helpmsg(char *buf, int buflen){
     }
     return NULL;
 }
-static char *stepperstatus(char *buf, int buflen){
-    if(stepstatus) return stepstatus(buf, buflen);
-    snprintf(buf, buflen, "not defined");
+static char *stepperstatus(const char *messageid, char *buf, int buflen){
+    if(stepstatus) return stepstatus(messageid, buf, buflen);
+    snprintf(buf, buflen, FAIL);
+    return buf;
+}
+static char *getimagedata(const char *messageid, char *buf, int buflen){
+    if(imagedata) return imagedata(messageid, buf, buflen);
+    else snprintf(buf, buflen, FAIL);
     return buf;
 }
 
@@ -104,23 +123,54 @@ static char *stepperstatus(char *buf, int buflen){
 static char *setstepperstate(const char *state, char *buf, int buflen){
     DBG("set steppersstate to %s", state);
     if(setstepstatus) return setstepstatus(state, buf, buflen);
-    snprintf(buf, buflen, "not defined");
+    snprintf(buf, buflen, FAIL);
     return buf;
 }
 static char *setfocusstate(const char *state, char *buf, int buflen){
     DBG("move focus to %s", state);
     if(movefocus) return movefocus(state, buf, buflen);
-    snprintf(buf, buflen, "not defined");
+    snprintf(buf, buflen, FAIL);
     return buf;
 }
+/*
+static char *setexposition(const char *expos, char *buf, int buflen){
+    DBG("Set exp to %s ms", expos);
+    float e = atof(expos);
+    if(e < EXPOS_MIN || e > EXPOS_MAX){
+        snprintf(buf, buflen, "bad value");
+    }else{
+        exptime = (float) e;
+        LOGMSG("Set exposition time to %gms", e);
+        snprintf(buf, buflen, OK);
+    }
+    return buf;
+}
+static char *setexposmethod(const char *expos, char *buf, int buflen){
+    int good = 0;
+    if(strncasecmp(expos, "auto", 4) == 0){
+        autoExposition = TRUE;
+        LOGMSG("Set exposition method to \"auto\"");
+        good = 1;
+    }else if(strncasecmp(expos, "manual", 6) == 0){
+        autoExposition = FALSE;
+        LOGMSG("Set exposition method to \"manual\"");
+        good = 1;
+    }
+    if(good) snprintf(buf, buflen, OK);
+    else snprintf(buf, buflen, "wrong method: \"%s\"", expos);
+    return buf;
+}
+*/
 
-
+/*
 static char *rmnl(const char *msg, char *buf, int buflen){
     strncpy(buf, msg, buflen);
     char *nl = strchr(buf, '\n');
     if(nl) *nl = 0;
     return buf;
 }
+*/
+
 /**
  * @brief processCommand - command parser
  * @param msg - incoming message
@@ -144,12 +194,13 @@ static char *processCommand(const char msg[BUFLEN], char *ans, int anslen){
                 break;
                 case PAR_DOUBLE:
                     DBG("FOUND! Double, old=%g, new=%g", *((double*)par->ptr), result.val.dblval);
+                    *((double*)par->ptr) = result.val.dblval;
                 break;
                 default:
-                    snprintf(ans, anslen, "undefined type");
+                    snprintf(ans, anslen, FAIL);
                     return ans;
             }
-            snprintf(ans, anslen, "success");
+            snprintf(ans, anslen, OK);
             return ans;
         }else{
             setter *s = setterHandlers;
@@ -166,11 +217,11 @@ static char *processCommand(const char msg[BUFLEN], char *ans, int anslen){
         while(g->command){
             int l = strlen(g->command);
             if(strncasecmp(msg, g->command, l) == 0)
-                return g->handler(ans, anslen);
+                return g->handler(g->command, ans, anslen);
             ++g;
         }
     }
-    snprintf(ans, anslen, "Message '%s' is wrong", rmnl(msg, value, BUFLEN));
+    snprintf(ans, anslen, FAIL);
     return ans;
 }
 
@@ -238,6 +289,10 @@ static void *server(void *asock){
     poll_set[0].fd = sock;
     poll_set[0].events = POLLIN;
     while(1){
+        if(stopwork){
+            DBG("server() exit @ global stop");
+            return NULL;
+        }
         poll(poll_set, nfd, 1); // poll for 1ms
         for(int fdidx = 0; fdidx < nfd; ++fdidx){ // poll opened FDs
             if((poll_set[fdidx].revents & POLLIN) == 0) continue;
@@ -252,8 +307,6 @@ static void *server(void *asock){
                     LOGMSG("Client %d disconnected", fd);
                     // move last to free space
                     poll_set[fdidx] = poll_set[nfd - 1];
-                    //for(int i = fdidx; i < nfd-1; ++i)
-                    //    poll_set[i] = poll_set[i + 1];
                     --nfd;
                 }
             }else{ // server
@@ -283,15 +336,6 @@ static void *server(void *asock){
                 }
             }
         } // endfor
-        /*
-        char *srvmesg = mesgGetText(&ServerMessages); // broadcast messages to all clients
-        if(srvmesg){ // send broadcast message to all clients or throw them to /dev/null
-            for(int fdidx = 1; fdidx < nfd; ++fdidx){
-                send_data(poll_set[fdidx].fd, srvmesg);
-            }
-            FREE(srvmesg);
-        }
-        */
     }
     LOGERR("server(): UNREACHABLE CODE REACHED!");
 }
@@ -300,13 +344,16 @@ static void *server(void *asock){
 static void daemon_(int sock){
     if(sock < 0) return;
     pthread_t sock_thread;//, canserver_thread;
-    if(pthread_create(&sock_thread, NULL, server, (void*) &sock)
-       //|| pthread_create(&canserver_thread, NULL, CANserver, NULL)
-       ){
+    if(pthread_create(&sock_thread, NULL, server, (void*) &sock)){
         LOGERR("daemon_(): pthread_create() failed");
         ERR("pthread_create()");
     }
     do{
+        if(stopwork){
+            DBG("kill");
+            pthread_join(sock_thread, NULL);
+            return;
+        }
         if(pthread_kill(sock_thread, 0) == ESRCH){ // died
             WARNX("Sockets thread died");
             LOGERR("Sockets thread died");
@@ -316,23 +363,7 @@ static void daemon_(int sock){
                 ERR("pthread_create(sock_thread)");
             }
         }
-        /*if(pthread_kill(canserver_thread, 0) == ESRCH){
-            WARNX("CANserver thread died");
-            LOGERR("CANserver thread died");
-            pthread_join(canserver_thread, NULL);
-            if(pthread_create(&canserver_thread, NULL, CANserver, NULL)){
-                LOGERR("daemon_(): new pthread_create(canserver_thread) failed");
-                ERR("pthread_create(canserver_thread)");
-            }
-        }*/
         usleep(1000); // sleep a little or thread's won't be able to lock mutex
-        // copy temporary buffers to main
-        //pthread_mutex_lock(&mutex);
-        /*
-         * INSERT CODE HERE
-         * fill global data buffers
-         */
-        //pthread_mutex_unlock(&mutex);
     }while(1);
     LOGERR("daemon_(): UNREACHABLE CODE REACHED!");
 }
@@ -388,8 +419,7 @@ static void *connect2sock(void *data){
     freeaddrinfo(res);
     daemon_(sock);
     close(sock);
-    LOGERR("openIOport(): UNREACHABLE CODE REACHED!");
-    signals(22);
+    LOGWARN("openIOport(): close @ global stop");
     return NULL;
 }
 
@@ -405,4 +435,5 @@ void openIOport(int portN){
         LOGERR("openIOport(): pthread_create() failed");
         ERR("pthread_create()");
     }
+    pthread_detach(connthread);
 }

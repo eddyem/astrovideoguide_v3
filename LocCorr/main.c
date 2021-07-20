@@ -17,6 +17,7 @@
  */
 
 #include <math.h>
+#include <pthread.h>
 #include <signal.h>         // signal
 #include <string.h>         // strdup
 #include <usefull_macros.h>
@@ -28,6 +29,8 @@
 #include "pusirobo.h"
 #include "socket.h"
 
+static InputType tp;
+
 /**
  * We REDEFINE the default WEAK function of signal processing
  */
@@ -36,21 +39,17 @@ void signals(int sig){
         signal(sig, SIG_IGN);
         DBG("Get signal %d, quit.\n", sig);
     }
+    stopwork = TRUE;
     DBG("exit %d", sig);
     LOGERR("Exit with status %d", sig);
-    stopwork = 1;
     saveconf(NULL);
-    usleep(10000);
-    DBG("disconnectGrasshopper()");
-    disconnectGrasshopper();
-    DBG("pusi_disconnect()");
-    pusi_disconnect();
-    DBG("closeXYlog()");
-    closeXYlog();
     if(GP && GP->pidfile){ // remove unnesessary PID file
         DBG("unlink(GP->pidfile)");
         unlink(GP->pidfile);
     }
+    DBG("closeXYlog()");
+    closeXYlog();
+    DBG("EXIT %d", sig);
     exit(sig);
 }
 
@@ -58,12 +57,18 @@ void iffound_default(pid_t pid){
     ERRX("Another copy of this process found, pid=%d. Exit.", pid);
 }
 
+void *procinp_thread(_U_ void* arg){
+    int p = process_input(tp, GP->inputname);
+    LOGDBG("process_input=%d", p);
+    return NULL;
+}
+
 static InputType chk_inp(const char *name){
     if(!name) ERRX("Point file or directory name to monitor");
-    InputType tp = chkinput(GP->inputname);
-    if(T_WRONG == tp) return T_WRONG;
+    InputType itp = chkinput(GP->inputname);
+    if(T_WRONG == itp) return T_WRONG;
     green("\n%s is a ", name);
-    switch(tp){
+    switch(itp){
         case T_DIRECTORY:
             printf("directory");
         break;
@@ -93,7 +98,7 @@ static InputType chk_inp(const char *name){
             return T_WRONG;
     }
     printf("\n");
-    return tp;
+    return itp;
 }
 
 int main(int argc, char *argv[]){
@@ -105,8 +110,14 @@ int main(int argc, char *argv[]){
     }
     if(GP->Naveraging < 2 || GP->Naveraging > MAX_AVERAGING_ARRAY_SIZE)
         ERRX("Averaging amount should be from 2 to 25");
-    InputType tp = chk_inp(GP->inputname);
+    tp = chk_inp(GP->inputname);
     if(tp == T_WRONG) ERRX("Enter correct image file or directory name");
+    // check ability of saving file
+    {
+        FILE *f = fopen(GP->outputjpg, "w");
+        if(!f) ERR("Can't create %s", GP->outputjpg);
+        fclose(f);
+    }
     if(GP->logfile){
         sl_loglevel lvl = LOGLEVEL_ERR; // default log level - errors
         int v = GP->verb;
@@ -178,9 +189,18 @@ int main(int argc, char *argv[]){
     LOGMSG("Start application...");
     LOGDBG("xtag=%g, ytag=%g", theconf.xtarget, theconf.ytarget);
     openIOport(GP->ioport);
-    int p = process_input(tp, GP->inputname);
-    DBG("process_input=%d", p);
-    // never reached
-    signals(p); // clean everything
-    return p;
+    pthread_t inp_thread;
+    if(pthread_create(&inp_thread, NULL, procinp_thread, NULL)){
+        LOGERR("pthread_create() for image input failed");
+        ERR("pthread_create()");
+    }
+    while(1){
+        if(stopwork || pthread_kill(inp_thread, 0) == ESRCH){
+            DBG("close");
+            pthread_join(inp_thread, NULL);
+            DBG("out");
+            return 0;
+        }
+    };
+    return 0;
 }

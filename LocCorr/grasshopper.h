@@ -25,5 +25,6 @@
 
 void disconnectGrasshopper();
 int capture_grasshopper(void (*process)(Image *));
+char *gsimagestatus(const char *messageid, char *buf, int buflen);
 
 #endif // GRASSHOPPER_H__

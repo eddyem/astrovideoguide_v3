@@ -34,11 +34,6 @@
 #include "imagefile.h"
 #include "median.h"
 
-// weights to convert colour image into gray (sum=1!)
-#define WEIGHT_RED      ()
-#define WEIGHT_GREEN    ()
-#define WEIGHT_BLUE     ()
-
 typedef struct{
     const char signature[8];
     uint8_t len;
@@ -224,7 +219,7 @@ uint8_t *linear(const Image *I, int nchannels){ // only 1 and 3 channels support
     size_t stride = width*nchannels, S = height*stride;
     uint8_t *outp = MALLOC(uint8_t, S);
     Imtype min = I->minval, max = I->maxval, W = 255./(max - min);
-    DBG("make linear transform %dx%d, %d channels", I->width, I->height, nchannels);
+    //DBG("make linear transform %dx%d, %d channels", I->width, I->height, nchannels);
     if(nchannels == 3){
         OMP_FOR()
         for(int y = 0; y < height; ++y){
@@ -340,7 +335,6 @@ int Image_write_jpg(const Image *I, const char *name, int eq){
     DBG("Try to write %s", name);
     char *tmpnm = MALLOC(char, strlen(name) + 5);
     sprintf(tmpnm, "%s-tmp", name);
-//    char *tmpnm = tmpnam_r(buf);
     int r = stbi_write_jpg(tmpnm, I->width, I->height, 1, outp, 95);
     if(r){
         if(rename(tmpnm, name)){
@@ -361,22 +355,6 @@ void Image_minmax(Image *I){
 #ifdef EBUG
     double t0 = dtime();
 #endif
-    /*
-    int N = omp_get_max_threads();
-    Imtype arrmin[N], arrmax[N];
-    for(int i = 0; i < N; ++i){
-        arrmin[i] = min; arrmax[i] = max;
-    }
-    OMP_FOR()
-    for(int i = 0; i < wh; ++i){
-        if(I->data[i] < arrmin[omp_get_thread_num()]) arrmin[omp_get_thread_num()] = I->data[i];
-        else if(I->data[i] > arrmax[omp_get_thread_num()]) arrmax[omp_get_thread_num()] = I->data[i];
-    }
-
-    for(int i = 0; i < N; ++i){
-        if(min > arrmin[i]) min = arrmin[i];
-        if(max < arrmax[i]) max = arrmax[i];
-    }*/
     #pragma omp parallel shared(min, max)
     {
         int min_p = min, max_p = min;

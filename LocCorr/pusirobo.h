@@ -35,7 +35,7 @@ int pusi_setstate(pusistate newstate);
 pusistate pusi_getstate();
 void pusi_disconnect();
 void pusi_process_corrections(double X, double Y, int corrflag);
-char *pusi_status(char *buf, int buflen);
+char *pusi_status(const char *messageid, char *buf, int buflen);
 char *set_pusistatus(const char *newstatus, char *buf, int buflen);
 char *set_pfocus(const char *newstatus, char *buf, int buflen);
 char *get_JSON_status(char *buf, int buflen);
