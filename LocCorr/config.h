@@ -23,6 +23,7 @@
 // min/max total steps range
 #define MINSTEPS        (100)
 #define MAXSTEPS        (50000)
+#define Fmaxsteps       (64000)
 // steps per pixel
 #define COEFMIN         (0.1)
 #define COEFMAX         (10000)
@@ -56,6 +57,8 @@
 typedef struct{
     int maxUsteps;      // max amount of steps by both axes
     int maxVsteps;
+    int maxFpos;        // min/max F position (in microsteps) - user can't change this
+    int minFpos;
     int minarea;        // min/max area of star image
     int maxarea;
     int Nerosions;      // amount of erosions/dilations

@@ -63,7 +63,6 @@
 #define CURPOSstatus        "curpos"
 // max range of U and V motors (all in microsteps!)
 #define UVmaxsteps          (35200)
-#define Fmaxsteps           (64000)
 // steps to move from the edge
 #define UVedgesteps         (960)
 
@@ -90,6 +89,9 @@ static setupstatus sstatus = SETUP_NONE; // setup state
 static pusistate state = PUSI_DISCONN;   // server state
 
 static int sockfd = -1; // server file descriptor
+
+// mutex for message sending
+static pthread_mutex_t sendmesg_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 // current steps counters (zero at the middle)
 static int Uposition = 0, Vposition = 0, Fposition = 0;
@@ -212,6 +214,7 @@ static int waitOK(char **retval){
     return ret;
 }
 
+
 /**
  * @brief send_message - send character string `msg` to pusiserver
  * @param msg - message
@@ -221,22 +224,27 @@ static int waitOK(char **retval){
 static int send_message(const char *msg, char **ans){
     if(!msg || sockfd < 0) return FALSE;
     size_t L = strlen(msg);
+    if(pthread_mutex_lock(&sendmesg_mutex)) return FALSE;
     clearbuf();
     if(send(sockfd, msg, L, 0) != (ssize_t)L){
         LOGWARN("send_message(): send() failed");
         return FALSE;
     }
     DBG("Message '%s' sent", msg);
-    return waitOK(ans);
+    int r = waitOK(ans);
+    pthread_mutex_unlock(&sendmesg_mutex);
+    return r;
 }
 
 static void send_message_nocheck(const char *msg){
     if(!msg || sockfd < 0) return;
     size_t L = strlen(msg);
+    if(pthread_mutex_lock(&sendmesg_mutex)) return;
     clearbuf();
     if(send(sockfd, msg, L, 0) != (ssize_t)L){
         WARN("send");
     }
+    pthread_mutex_unlock(&sendmesg_mutex);
     DBG("Unchecked message '%s' sent", msg);
 }
 
@@ -684,13 +692,11 @@ char *pusi_status(const char *messageid, char *buf, int buflen){
         const char *motors[] = {"Umotor", "Vmotor", "Fmotor"};
         const char *statuses[] = {Ustatus, Vstatus, Fstatus};
         int *pos[] = {&Uposition, &Vposition, &Fposition};
-        const int maxpos[] = {UVmaxsteps, UVmaxsteps, Fmaxsteps};
-        const int minpos[] = {-UVmaxsteps, -UVmaxsteps, 0};
         for(int i = 0; i < 3; ++i){
             const char *stat = "moving";
             if(moving_finished(statuses[i], pos[i])) stat = "stopping";
-            l = snprintf(bptr, buflen, "\"%s\": { \"status\": \"%s\", \"position\": %d, \"minpos\": %d, \"maxpos\": %d }%s",
-                         motors[i], stat, *pos[i], minpos[i], maxpos[i], (i==2)?"":", ");
+            l = snprintf(bptr, buflen, "\"%s\": { \"status\": \"%s\", \"position\": %d }%s",
+                         motors[i], stat, *pos[i], (i==2)?"":", ");
             buflen -= l; bptr += l;
         }
     }
@@ -751,7 +757,7 @@ char *set_pfocus(const char *newstatus, char *buf, int buflen){
         return buf;
     }
     int newval = atoi(newstatus);
-    if(newval < 0 || newval > Fmaxsteps){
+    if(newval < theconf.minFpos || newval > theconf.maxFpos){
         snprintf(buf, buflen, FAIL);
     }else{
         if(!setF(newval)) snprintf(buf, buflen, FAIL);

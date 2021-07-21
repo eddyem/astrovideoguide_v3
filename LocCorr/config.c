@@ -29,6 +29,8 @@ static char *conffile = NULL; // configuration file name
 configuration theconf = {
     .maxUsteps=DEFAULT_MAXUSTEPS,
     .maxVsteps=DEFAULT_MAXVSTEPS,
+    .maxFpos=Fmaxsteps,
+    .minFpos=0,
     .minarea=DEFAULT_MINAREA,
     .maxarea=DEFAULT_MAXAREA,
     .Nerosions=DEFAULT_NEROSIONS,
@@ -110,6 +112,11 @@ static confparam parvals[] = {
      "gain value in manual mode"},
     {"starssort", PAR_INT, (void*)&theconf.starssort, 0, -DBL_EPSILON, 1.+DBL_EPSILON,
      "stars sorting algorithm: by distance from target (0) or by intensity (1)"},
+    // immutable parameters (max<min -> user can't change)
+    {"focmax", PAR_INT, (void*)&theconf.maxFpos, 0, 1., 0.,
+     "maximal focus position in microsteps"},
+    {"focmin", PAR_INT, (void*)&theconf.minFpos, 0, 1., 0.,
+     "minimal focus position in microsteps"},
     {NULL,  0,  NULL, 0, 0., 0., NULL}
 };
 
