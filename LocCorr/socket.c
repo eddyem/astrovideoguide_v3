@@ -79,8 +79,6 @@ static char *setfocusstate(const char *state, char *buf, int buflen);
 static setter setterHandlers[] = {
     {"stpstate", setstepperstate, "Set given steppers' server state"},
     {"focus", setfocusstate, "Move focus to given value"},
-//    {"exptime", setexposition, "Set exposition to new value (s)"},
-//    {"expmethod", setexposmethod, "Set exposition method (\"manual\"/\"auto\")"},
     {NULL, NULL, NULL}
 };
 
@@ -132,35 +130,6 @@ static char *setfocusstate(const char *state, char *buf, int buflen){
     snprintf(buf, buflen, FAIL);
     return buf;
 }
-/*
-static char *setexposition(const char *expos, char *buf, int buflen){
-    DBG("Set exp to %s ms", expos);
-    float e = atof(expos);
-    if(e < EXPOS_MIN || e > EXPOS_MAX){
-        snprintf(buf, buflen, "bad value");
-    }else{
-        exptime = (float) e;
-        LOGMSG("Set exposition time to %gms", e);
-        snprintf(buf, buflen, OK);
-    }
-    return buf;
-}
-static char *setexposmethod(const char *expos, char *buf, int buflen){
-    int good = 0;
-    if(strncasecmp(expos, "auto", 4) == 0){
-        autoExposition = TRUE;
-        LOGMSG("Set exposition method to \"auto\"");
-        good = 1;
-    }else if(strncasecmp(expos, "manual", 6) == 0){
-        autoExposition = FALSE;
-        LOGMSG("Set exposition method to \"manual\"");
-        good = 1;
-    }
-    if(good) snprintf(buf, buflen, OK);
-    else snprintf(buf, buflen, "wrong method: \"%s\"", expos);
-    return buf;
-}
-*/
 
 /*
 static char *rmnl(const char *msg, char *buf, int buflen){

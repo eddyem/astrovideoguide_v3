@@ -25,23 +25,19 @@
 
 // tolerance of deviations by X and Y axis (if sigmaX or sigmaY greater, values considered to be wrong)
 #define XY_TOLERANCE                (1.)
-// roundness parameter
-#define MINWH                       (0.5)
-#define MAXWH                       (2.)
 
 #define PUSIROBO_POSTPROC   "pusirobo"
 // how many frames will be averaged to count image deviation
 #define MAX_AVERAGING_ARRAY_SIZE        (25)
 
 extern volatile atomic_bool stopwork;
-extern double Xtarget, Ytarget;
 extern volatile atomic_ullong ImNumber;
-extern float exptime;
 //extern int autoExposition;
 extern char *(*stepstatus)(const char *messageid, char *buf, int buflen);
 extern char *(*setstepstatus)(const char *newstatus, char *buf, int buflen);
 extern char *(*movefocus)(const char *newstatus, char *buf, int buflen);
 extern char *(*imagedata)(const char *messageid, char *buf, int buflen);
+extern void (*stepdisconnect)();
 
 void process_file(Image *I);
 int  process_input(InputType tp, char *name);

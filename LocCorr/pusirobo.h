@@ -19,26 +19,17 @@
 #ifndef PUSIROBO_H__
 #define PUSIROBO_H__
 
-typedef enum{
-    PUSI_DISCONN,
-    PUSI_RELAX,
-    PUSI_SETUP,
-    PUSI_GOTOTHEMIDDLE,
-    PUSI_FINDTARGET,
-    PUSI_FIX,
-    PUSI_UNDEFINED
-} pusistate;
-
 // try to connect to local pusirobo server
 int pusi_connect();
-int pusi_setstate(pusistate newstate);
-pusistate pusi_getstate();
-void pusi_disconnect();
-void pusi_process_corrections(double X, double Y, int corrflag);
+// disconnect
+void pusi_stop();
+// global variable proc_corr
+void pusi_process_corrections(double X, double Y);
+// global variable stepstatus
 char *pusi_status(const char *messageid, char *buf, int buflen);
+// global variable setstepstatus
 char *set_pusistatus(const char *newstatus, char *buf, int buflen);
+// global variable movefocus
 char *set_pfocus(const char *newstatus, char *buf, int buflen);
-char *get_JSON_status(char *buf, int buflen);
-// ADD global SEND
 
 #endif // PUSIROBO_H__

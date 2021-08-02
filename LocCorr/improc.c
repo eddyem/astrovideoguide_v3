@@ -34,7 +34,6 @@
 #include "median.h"
 #include "pusirobo.h"
 
-float exptime = 10.; // GLOBAL: exposition time in milliseconds
 volatile atomic_ullong ImNumber = 0; // GLOBAL: counter of processed images
 volatile atomic_bool stopwork = FALSE; // GLOBAL: suicide
 //int autoExposition = 1; // GLOBAL: ==1 if exposition calculation is auto
@@ -47,6 +46,8 @@ char *(*setstepstatus)(const char *newstatus, char *buf, int buflen) = NULL;
 char *(*movefocus)(const char *newstatus, char *buf, int buflen) = NULL;
 // GLOBAL: get image information
 char *(*imagedata)(const char *messageid, char *buf, int buflen);
+// GLOBAL: disconnect stepper server
+void (*stepdisconnect)() = NULL;
 
 static FILE *fXYlog = NULL;
 static double tstart = 0.; // time of logging start
@@ -54,7 +55,7 @@ static double FPS = 0.; // frames per second
 
 
 // function to process calculated corrections
-static void (*proc_corr)(double, double, int) = NULL;
+static void (*proc_corr)(double, double) = NULL;
 
 typedef struct{
     uint32_t area;      // object area in pixels
@@ -152,11 +153,11 @@ static void getDeviation(object *curobj){
     averflag = 1;
     if(fXYlog) fprintf(fXYlog, "%.1f\t%.1f\t%.1f\t%.1f", xx, yy, Sx, Sy);
 process_corrections:
-    if(proc_corr){
+    if(proc_corr && averflag){
         if(Sx > XY_TOLERANCE || Sy > XY_TOLERANCE){
             LOGDBG("Bad value - not process"); // don't run processing for bad data
         }else
-            proc_corr(xx, yy, averflag);
+            proc_corr(xx, yy);
     }
     XYnewline();
 }
@@ -214,7 +215,7 @@ void process_file(Image *I){
                     double wh = ((double)b->xmax - b->xmin)/(b->ymax - b->ymin);
                     //DBG("Obj# %zd: wh=%g, area=%d", i, wh, b->area);
                     // TODO: change magick numbers to parameters
-                    if(wh < MINWH || wh > MAXWH) continue;
+                    if(wh < theconf.minwh || wh > theconf.maxwh) continue;
                     if((int)b->area < theconf.minarea || (int)b->area > theconf.maxarea) continue;
                     double xc = 0., yc = 0.;
                     double x2c = 0., y2c = 0., Isum = 0.;
@@ -266,12 +267,16 @@ void process_file(Image *I){
                         outp = equalize(I, 3, theconf.throwpart);
                     else
                         outp = linear(I, 3);
+                    static Pattern *cross = NULL;
+                    if(!cross) cross = Pattern_cross(33, 33);
+                    Img3 i3 = {.data = outp, .w = I->width, .h = H};
+                    // draw fiber center position
+                    Pattern_draw3(&i3, cross, theconf.xtarget-theconf.xoff, H-(theconf.ytarget-theconf.yoff), C_B);
                     if(objctr){ // draw crosses @ objects' centers
-                        static Pattern *cross = NULL;
-                        if(!cross) cross = Pattern_cross(33, 33);
                         int H = I->height;
-                        Img3 i3 = {.data = outp, .w = I->width, .h = H};
+                        // draw current star centroid
                         Pattern_draw3(&i3, cross, Objects[0].xc, H-Objects[0].yc, C_G);
+                        // draw other centroids
                         for(int i = 1; i < objctr; ++i)
                             Pattern_draw3(&i3, cross, Objects[i].xc, H-Objects[i].yc, C_R);
                         // Pattern_free(&cross); don't free - static variable!
@@ -390,6 +395,7 @@ void setpostprocess(const char *name){
             WARNX("Pusiserver unavailable, will check later");
             LOGWARN("Pusiserver unavailable, will check later");
         }
+        stepdisconnect = pusi_stop;
         proc_corr = pusi_process_corrections;
         stepstatus = pusi_status;
         setstepstatus = set_pusistatus;

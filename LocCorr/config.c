@@ -33,6 +33,8 @@ configuration theconf = {
     .minFpos=0,
     .minarea=DEFAULT_MINAREA,
     .maxarea=DEFAULT_MAXAREA,
+    .maxwh = 1.1,
+    .minwh = 0.9,
     .Nerosions=DEFAULT_NEROSIONS,
     .Ndilations=DEFAULT_NDILATIONS,
     .xoff=0,
@@ -53,6 +55,7 @@ configuration theconf = {
     .maxexp=EXPOS_MAX + DBL_EPSILON,
     .minexp=EXPOS_MIN - DBL_EPSILON,
     .fixedexp=EXPOS_MIN,
+    .gain = 20.,
     .intensthres=DEFAULT_INTENSTHRES
 };
 
@@ -62,6 +65,10 @@ static confparam parvals[] = {
      "maximal area (in square pixels) of recognized star image"},
     {"minarea", PAR_INT, (void*)&theconf.minarea, 0, MINAREA-DBL_EPSILON, MAXAREA+DBL_EPSILON,
      "minimal area (in square pixels) of recognized star image"},
+    {"minwh", PAR_DOUBLE, (void*)&theconf.minwh, 0, MINWH-DBL_EPSILON, 1.,
+     "minimal value of W/H roundness parameter"},
+    {"maxwh", PAR_DOUBLE, (void*)&theconf.maxwh, 0, 1., MAXWH+DBL_EPSILON,
+     "maximal value of W/H roundness parameter"},
     {"ndilat", PAR_INT, (void*)&theconf.Ndilations, 0, 1.-DBL_EPSILON, MAX_NDILAT+DBL_EPSILON,
      "amount of dilations on binarized image"},
     {"neros", PAR_INT, (void*)&theconf.Nerosions, 0, 1.-DBL_EPSILON, MAX_NEROS+DBL_EPSILON,
@@ -84,6 +91,10 @@ static confparam parvals[] = {
      "maximal value of steps on U semi-axe"},
     {"vmax", PAR_INT, (void*)&theconf.maxVsteps, 0, MINSTEPS-DBL_EPSILON, MAXSTEPS+DBL_EPSILON,
      "maximal value of steps on V semi-axe"},
+    {"focmax", PAR_INT, (void*)&theconf.maxFpos, 0, 0., Fmaxsteps,
+     "maximal focus position in microsteps"},
+    {"focmin", PAR_INT, (void*)&theconf.minFpos, 0, -Fmaxsteps, 0.,
+     "minimal focus position in microsteps"},
     {"stpservport", PAR_INT, (void*)&theconf.stpserverport, 0, -DBL_EPSILON, 65536.,
      "port number of steppers' server"},
     {"Kxu", PAR_DOUBLE, (void*)&theconf.Kxu, 0, KUVMIN-DBL_EPSILON, KUVMAX+DBL_EPSILON,
@@ -110,13 +121,10 @@ static confparam parvals[] = {
      "threshold by total object intensity when sorting = |I1-I2|/(I1+I2)"},
     {"gain", PAR_DOUBLE, (void*)&theconf.gain, 0, GAIN_MIN-DBL_EPSILON, GAIN_MAX+DBL_EPSILON,
      "gain value in manual mode"},
+    {"brightness", PAR_DOUBLE, (void*)&theconf.brightness, 0, BRIGHT_MIN-DBL_EPSILON, BRIGHT_MAX-DBL_EPSILON,
+     "brightness value"},
     {"starssort", PAR_INT, (void*)&theconf.starssort, 0, -DBL_EPSILON, 1.+DBL_EPSILON,
      "stars sorting algorithm: by distance from target (0) or by intensity (1)"},
-    // immutable parameters (max<min -> user can't change)
-    {"focmax", PAR_INT, (void*)&theconf.maxFpos, 0, 1., 0.,
-     "maximal focus position in microsteps"},
-    {"focmin", PAR_INT, (void*)&theconf.minFpos, 0, 1., 0.,
-     "minimal focus position in microsteps"},
     {NULL,  0,  NULL, 0, 0., 0., NULL}
 };
 

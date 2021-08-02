@@ -41,15 +41,16 @@ void signals(int sig){
     }
     stopwork = TRUE;
     DBG("exit %d", sig);
-    LOGERR("Exit with status %d", sig);
     saveconf(NULL);
     if(GP && GP->pidfile){ // remove unnesessary PID file
         DBG("unlink(GP->pidfile)");
         unlink(GP->pidfile);
     }
+    if(stepdisconnect) stepdisconnect();
     DBG("closeXYlog()");
     closeXYlog();
     DBG("EXIT %d", sig);
+    LOGERR("Exit with status %d", sig);
     exit(sig);
 }
 

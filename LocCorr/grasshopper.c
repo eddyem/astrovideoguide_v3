@@ -34,7 +34,9 @@
 static fc2Context context;
 static fc2PGRGuid guid;
 static fc2Error err = FC2_ERROR_OK;
-static float gain = 0.;
+static float gain = 20.;
+static float exptime = 100.;
+static float brightness = 0.;
 
 #define FC2FN(fn, ...) do{err = FC2_ERROR_OK; if(FC2_ERROR_OK != (err=fn(context __VA_OPT__(,) __VA_ARGS__))){ \
     WARNX(#fn "(): %s", fc2ErrorToDescription(err)); return 0;}}while(0)
@@ -186,7 +188,7 @@ static int connect(){
 }
 
 static int GrabImage(fc2Image *convertedImage){
-    FNAME();
+    //FNAME();
     int ret = 0;
     fc2Image rawImage;
     // start capture
@@ -282,6 +284,7 @@ int capture_grasshopper(void (*process)(Image*)){
     FNAME();
     static float oldexptime = 0.;
     static float oldgain = -1.;
+    static float oldbrightness = -1.;
     Image *oIma = NULL;
     fc2Image convertedImage;
     err = fc2CreateImage(&convertedImage);
@@ -300,24 +303,28 @@ int capture_grasshopper(void (*process)(Image*)){
             sleep(1);
             continue;
         }
+        if(fabsf(oldbrightness - brightness) > FLT_EPSILON){ // new brightness
+            DBG("Change brightness to %g", brightness);
+            if(setbrightness(brightness)){
+                oldbrightness = brightness;
+            }else{
+                WARNX("Can't change brightness to %g", brightness);
+            }
+        }
         if(fabsf(oldexptime - exptime) > FLT_EPSILON){ // new exsposition value
-            red("Change exptime to %.2fms\n", exptime);
+            DBG("Change exptime to %.2fms\n", exptime);
             if(setexp(exptime)){
                 oldexptime = exptime;
             }else{
                 WARNX("Can't change exposition time to %gms", exptime);
-                //disconnectGrasshopper();
-                //continue;
             }
         }
-        if(fabs(oldgain - gain) > FLT_EPSILON){ // change gain
-            red("Change gain to %g\n", gain);
+        if(fabsf(oldgain - gain) > FLT_EPSILON){ // change gain
+            DBG("Change gain to %g\n", gain);
             if(setgain(gain)){
                 oldgain = gain;
             }else{
                 WARNX("Can't change gain to %g", gain);
-                //disconnectGrasshopper();
-                //continue;
             }
         }
         if(!GrabImage(&convertedImage)){
@@ -331,6 +338,8 @@ int capture_grasshopper(void (*process)(Image*)){
                 exptime = theconf.fixedexp;
             if(fabs(theconf.gain - gain) > FLT_EPSILON)
                 gain = theconf.gain;
+            if(fabs(theconf.brightness - brightness) > FLT_EPSILON)
+                brightness = theconf.brightness;
         }
         if(!process){
             continue;
@@ -359,8 +368,8 @@ char *gsimagestatus(const char *messageid, char *buf, int buflen){
         DBG("path: %s", impath);
     }
     snprintf(buf, buflen, "{ \"%s\": \"%s\", \"camstatus\": \"%sconnected\", \"impath\": \"%s\", \"imctr\": %llu, "
-             "\"fps\": %.3f, \"expmethod\": \"%s\", \"exposition\": %g, \"gain\": %g }\n",
+             "\"fps\": %.3f, \"expmethod\": \"%s\", \"exposition\": %g, \"gain\": %g, \"brightness\": %g }\n",
              MESSAGEID, messageid, connected ? "" : "dis", impath, ImNumber, getFramesPerS(),
-             (theconf.expmethod == EXPAUTO) ? "auto" : "manual", exptime, gain);
+             (theconf.expmethod == EXPAUTO) ? "auto" : "manual", exptime, gain, brightness);
     return buf;
 }

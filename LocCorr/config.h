@@ -36,20 +36,26 @@
 #define MAX_OFFSET      (10000)
 // min/max exposition in ms
 #define EXPOS_MIN       (0.1)
-#define EXPOS_MAX       (4000.)
+#define EXPOS_MAX       (4001.)
 #define GAIN_MIN        (0.)
-#define GAIN_MAX        (20.)
+#define GAIN_MAX        (33.)
+#define BRIGHT_MIN      (0.)
+#define BRIGHT_MAX      (1000.)
 // max average images counter
 #define NAVER_MAX       (50)
 // coefficients to convert dx,dy to du,dv
 #define KUVMIN           (-5000.)
 #define KUVMAX           (5000.)
 // default coefficient for corrections (move to Kdu, Kdv instead of du, dv)
-#define KCORR           (0.9)
+#define KCORR           (0.97)
 
 // exposition methods: 0 - auto, 1 - fixed
 #define EXPAUTO         (0)
 #define EXPMANUAL       (1)
+
+// roundness parameter
+#define MINWH                       (0.3)
+#define MAXWH                       (3.)
 
 // messageID field name
 #define MESSAGEID       "messageid"
@@ -75,6 +81,7 @@ typedef struct{
     // dU = Kxu*dX + Kyu*dY; dV = Kxv*dX + Kyv*dY
     double Kxu; double Kyu;
     double Kxv; double Kyv;
+    double minwh; double maxwh; // roundness parameters
     double xtarget;     // target (center) values (in absolute coordinates! screen coords = target - offset)
     double ytarget;
     double throwpart;   // part of values to throw avay @ histogram equalisation
@@ -82,6 +89,7 @@ typedef struct{
     double minexp;
     double fixedexp;    // exptime in manual mode
     double gain;        // gain value in manual mode
+    double brightness;  // brightness @camera
     double intensthres; // threshold for stars intensity comparison: fabs(Ia-Ib)/(Ia+Ib) > thres -> stars differs
 } configuration;
 

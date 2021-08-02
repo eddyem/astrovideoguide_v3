@@ -135,7 +135,7 @@ Image *u8toImage(uint8_t *data, int width, int height, int stride){
     }
     outp->minval = (Imtype) min;
     outp->maxval = (Imtype) max;
-    DBG("\nMAX=%g, MIN=%g\n", outp->maxval, outp->minval);
+    //DBG("\nMAX=%g, MIN=%g\n", outp->maxval, outp->minval);
     outp->data = MALLOC(Imtype, width*height);
     // flip image updown for FITS coordinate system
     OMP_FOR()
@@ -277,7 +277,7 @@ uint8_t *equalize(const Image *I, int nchannels, double throwpart){
         Nwhite += orig_hysto[stopidx];
         if(Nwhite >= wpart) break;
     }*/
-    DBG("Throw %d (real: %d black) pixels, startidx=%d", bpart, Nblack, startidx);
+    //DBG("Throw %d (real: %d black) pixels, startidx=%d", bpart, Nblack, startidx);
 /*
     double part = (double)(s + 1) / 256., N = 0.;
     for(int i = 0; i < 256; ++i){
@@ -332,7 +332,7 @@ int Image_write_jpg(const Image *I, const char *name, int eq){
         outp = equalize(I, 1, theconf.throwpart);
     else
         outp = linear(I, 1);
-    DBG("Try to write %s", name);
+    //DBG("Try to write %s", name);
     char *tmpnm = MALLOC(char, strlen(name) + 5);
     sprintf(tmpnm, "%s-tmp", name);
     int r = stbi_write_jpg(tmpnm, I->width, I->height, 1, outp, 95);

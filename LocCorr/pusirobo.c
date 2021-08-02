@@ -20,6 +20,7 @@
 #include <math.h>
 #include <netdb.h>
 #include <pthread.h>
+#include <stdatomic.h>
 #include <stdio.h>
 #include <string.h>
 #include <sys/types.h>
@@ -27,6 +28,7 @@
 #include <usefull_macros.h>
 
 #include "config.h"
+#include "improc.h" // global variable stopwork
 #include "pusirobo.h"
 #include "socket.h"
 
@@ -37,14 +39,14 @@
 // amount of consequent center coordinates coincidence in `process_targetstate`
 #define NCONSEQ             (2)
 // tolerance of coordinates coincidence (pix)
-#define COORDTOLERANCE      (0.1)
+#define COORDTOLERANCE      (0.5)
 
 // messages for CAN server
 #define registerUaxe        "register U 0x581 stepper"
 #define registerVaxe        "register V 0x582 stepper"
 #define registerFocus       "register F 0x583 stepper"
-#define setUspeed           "mesg U maxspeed 12800"
-#define setVspeed           "mesg V maxspeed 12800"
+#define setUspeed           "mesg U maxspeed 22400"
+#define setVspeed           "mesg V maxspeed 22400"
 #define setFspeed           "mesg F maxspeed 12800"
 #define Urelsteps           "mesg U relmove "
 #define Vrelsteps           "mesg V relmove "
@@ -62,16 +64,24 @@
 #define ERRstatus           "errstatus"
 #define CURPOSstatus        "curpos"
 // max range of U and V motors (all in microsteps!)
-#define UVmaxsteps          (35200)
+#define UVmaxsteps          (96000)
 // steps to move from the edge
-#define UVedgesteps         (960)
-
+#define UVedgesteps         (3200)
 
 #define moveU(s)                move_motor(Urelsteps, s)
 #define moveV(s)                move_motor(Vrelsteps, s)
 #define moveF(s)                move_motor(Frelsteps, s)
 #define setF(s)                 move_motor(Fabssteps, s)
-#define UVmoving_finished()     (moving_finished(Ustatus, NULL) && moving_finished(Vstatus, NULL))
+
+typedef enum{
+    PUSI_DISCONN,
+    PUSI_RELAX,
+    PUSI_SETUP,
+    PUSI_GOTOTHEMIDDLE,
+    PUSI_FINDTARGET,
+    PUSI_FIX,
+    PUSI_UNDEFINED
+} pusistate;
 
 typedef enum{
     SETUP_NONE,             // no setup
@@ -84,9 +94,18 @@ typedef enum{
     SETUP_WAITVMAX,         // V->max
     SETUP_FINISH
 } setupstatus;
-static setupstatus sstatus = SETUP_NONE; // setup state
+static _Atomic setupstatus sstatus = SETUP_NONE; // setup state
 
 static pusistate state = PUSI_DISCONN;   // server state
+// the `ismoving` flag allows not to make corrections with bad images made when moving
+static volatile atomic_bool ismoving = FALSE; // == TRUE if any of steppers @hanging part is moving
+// this flag set to TRUE when next Xc,Yc available
+static volatile atomic_bool coordsRdy = FALSE;
+static double Xtarget = 0., Ytarget = 0.;
+
+// flag & new focus value
+static volatile atomic_bool chfocus = FALSE;
+static volatile atomic_int newfocpos = 0;
 
 static int sockfd = -1; // server file descriptor
 
@@ -94,12 +113,14 @@ static int sockfd = -1; // server file descriptor
 static pthread_mutex_t sendmesg_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 // current steps counters (zero at the middle)
-static int Uposition = 0, Vposition = 0, Fposition = 0;
+static volatile atomic_int Uposition = 0, Vposition = 0, Fposition = 0;
+static volatile atomic_bool Umoving = FALSE, Vmoving = FALSE, Fmoving = FALSE;
 static uint8_t fixerr = 0; // ==1 if can't fixed
 
-void pusi_disconnect(){
+static void pusi_disconnect(){
     if(sockfd > -1) close(sockfd);
     sockfd = -1;
+    Umoving = Vmoving = Fmoving = ismoving = FALSE;
     state = PUSI_DISCONN;
 }
 
@@ -209,7 +230,9 @@ static int waitOK(char **retval){
             *retval = strdup(ok + sizeof(ANSOK)-1);
             //DBG("RETVAL: '%s'", *retval);
         }
-    }else LOGWARN("didn't get OK answer");
+    }else{
+        LOGWARN("didn't get OK answer");
+    }
 #undef BUFFERSZ
     return ret;
 }
@@ -230,7 +253,7 @@ static int send_message(const char *msg, char **ans){
         LOGWARN("send_message(): send() failed");
         return FALSE;
     }
-    DBG("Message '%s' sent", msg);
+    //DBG("Message '%s' sent", msg);
     int r = waitOK(ans);
     pthread_mutex_unlock(&sendmesg_mutex);
     return r;
@@ -267,10 +290,11 @@ static int setSpeed(const char *mesg, const char *name){
 }
 
 /**
- * @brief pusi_connect - connect to a local steppers CAN server
+ * @brief pusi_connect_server - try connect to a local steppers CAN server
  * @return FALSE if failed
  */
-int pusi_connect(){
+static int pusi_connect_server(){
+    Umoving = Fmoving = Vmoving = ismoving = FALSE;
     DBG("pusi_connect(%d)", theconf.stpserverport);
     char port[10];
     snprintf(port, 10, "%d", theconf.stpserverport);
@@ -318,15 +342,38 @@ int pusi_connect(){
     return retval;
 }
 
+static void *pusi_process_states(_U_ void *arg);
+static pthread_t processingthread;
+/**
+ * @brief pusi_connect - run a thread processed steppers status
+ * @return FALSE if failed to connect immediately
+ */
+int pusi_connect(){
+    int c = pusi_connect_server();
+    if(pthread_create(&processingthread, NULL, pusi_process_states, NULL)){
+        LOGERR("pthread_create() for pusirobo server failed");
+        ERR("pthread_create()");
+    }
+    return c;
+}
+
+// stop processing & disconnect
+void pusi_stop(){
+    pthread_join(processingthread, NULL);
+    pusi_disconnect();
+}
+
 // return TRUE if motor is stopped
-static int moving_finished(const char *mesgstatus, int *position){
+static int moving_finished(const char *mesgstatus, volatile atomic_int *position){
     double val;
     char *ans = NULL;
     int ret = TRUE;
     if(send_message(mesgstatus, &ans) && getparval(PARstatus, ans, &val)){
-        DBG("send(%s) true: %s %g\n", mesgstatus, ans, val);
+        //DBG("send(%s) true: %s %g\n", mesgstatus, ans, val);
     }else{
+        WARNX("send(%s) false: %s %g\n", mesgstatus, ans, val);
         LOGDBG("send(%s) false: %s %g\n", mesgstatus, ans, val);
+        pusi_disconnect();
         return FALSE;
     }
     int ival = (int)val;
@@ -334,25 +381,31 @@ static int moving_finished(const char *mesgstatus, int *position){
     if(position){
         if(getparval(CURPOSstatus, ans, &val)){
             *position = (int) val;
-        }else LOGDBG("%s not found in '%s'", CURPOSstatus, ans);
+        }else{
+            WARNX("%s not found in '%s'", CURPOSstatus, ans);
+            LOGDBG("%s not found in '%s'", CURPOSstatus, ans);
+        }
     }
     FREE(ans);
     return ret;
 }
 
 // move motor to s steps, @return FALSE if failed
-static int move_motor(const char *movecmd, int s/*, int *counter*/){
+static int move_motor(const char *movecmd, int s){
     DBG("move %s -> %d", movecmd, s);
     LOGDBG("move %s -> %d", movecmd, s);
     char buf[256], *ans;
     snprintf(buf, 255, "%s %d", movecmd, s);
     if(!send_message(buf, &ans)){
+        WARNX("can't send message");
         LOGDBG("can't send message");
+        pusi_disconnect();
         return FALSE;
     }
     int ret = TRUE;
     if(!getOKval(STEPSstatus, ans)){
-        LOGDBG("NO OK in %s", ans);
+        WARNX("NO OK in %s", ans);
+        LOGWARN("NO OK in %s", ans);
         ret = FALSE;
     }
     FREE(ans);
@@ -362,27 +415,27 @@ static int move_motor(const char *movecmd, int s/*, int *counter*/){
 static void process_movetomiddle_stage(){
     switch(sstatus){
         case SETUP_INIT: // initial moving
-            if(moveU(-UVmaxsteps) && moveV(-UVmaxsteps) && moveF(-Fmaxsteps))
+            if(moveF(-Fmaxsteps) && moveU(-UVmaxsteps) && moveV(-UVmaxsteps))
                 sstatus = SETUP_WAITUV0;
         break;
         case SETUP_WAITUV0: // wait for both coordinates moving to zero
-            DBG("Moving to left border");
-            if(!(UVmoving_finished() && moving_finished(Fstatus, NULL))) return;
-            DBG("Reached!");
-            if(!send_message(Fsetzero, NULL)) return;
-            Fposition = 0;
-            if(moveU(theconf.maxUsteps+UVedgesteps) && moveV(theconf.maxUsteps+UVedgesteps) && moveF(Fmaxsteps/2))
+            DBG("Reached UVF0!");
+            if(moveF(Fmaxsteps/2) && moveU(theconf.maxUsteps+UVedgesteps) && moveV(theconf.maxVsteps+UVedgesteps))
                 sstatus = SETUP_WAITUVMID;
+            else{
+                LOGWARN("GOTO middle: err in move command");
+                sstatus = SETUP_INIT;
+            }
         break;
         case SETUP_WAITUVMID: // wait for the middle
-            DBG("Moving to the middle");
-            if(!(UVmoving_finished() && moving_finished(Fstatus, NULL))) return;
-            DBG("Reached!");
-            Uposition = 0; Vposition = 0; Fposition = Fmaxsteps/2;
-            if(!send_message(Usetzero, NULL) || !send_message(Vsetzero, NULL)) return;
-            sstatus = SETUP_NONE;
-            state = PUSI_RELAX;
-        break;
+            DBG("Reached middle position");
+            if(!send_message(Fsetzero, NULL) || !send_message(Usetzero, NULL) || !send_message(Vsetzero, NULL)){
+                LOGWARN("GOTO middle: err in set 0 command");
+                sstatus = SETUP_INIT;
+                return;
+            }
+            Uposition = Vposition = Fposition = 0;
+        // fallthrough
         default:
             sstatus = SETUP_NONE;
             state = PUSI_RELAX;
@@ -392,9 +445,8 @@ static void process_movetomiddle_stage(){
 /**
  * @brief process_setup_stage - process all stages of axes setup
  */
-static void process_setup_stage(double x, double y, int aver){
+static void process_setup_stage(){
     DBG("PROCESS: %d\n", sstatus);
-    static int ctr; // iterations counter
      // coordinates for corrections calculation
     static double X0U, Y0U, XmU, YmU;
     static double X0V, Y0V, XmV, YmV;
@@ -404,54 +456,61 @@ static void process_setup_stage(double x, double y, int aver){
                 sstatus = SETUP_WAITUV0;
         break;
         case SETUP_WAITUV0: // wait for both coordinates moving to zero
-            DBG("Moving to left border");
-            if(!UVmoving_finished()) return;
-            DBG("Reached!");
+            DBG("Left border reached");
             if(moveU(theconf.maxUsteps+UVedgesteps) && moveV(theconf.maxUsteps+UVedgesteps))
                 sstatus = SETUP_WAITUVMID;
+            else{
+                LOGWARN("Can't move U/V -> 0");
+                sstatus = SETUP_INIT;
+            }
         break;
         case SETUP_WAITUVMID: // wait for the middle
-            DBG("Moving to the middle");
-            if(!UVmoving_finished()) return;
-            DBG("Reached!");
-            Uposition = 0; Vposition = 0;
+            DBG("The middle reached");
             if(moveU(-theconf.maxUsteps)) sstatus = SETUP_WAITU0;
-            ctr = 0;
+            else{
+                LOGWARN("Can't move U -> middle");
+                sstatus = SETUP_INIT;
+            }
         break;
         case SETUP_WAITU0: // wait while U moves to zero
-            if(!aver) return;
-            if(!moving_finished(Ustatus, NULL)) return;
-            if(++ctr < 2) return; // wait for next average coordinates
-            X0U = x; Y0U = y;
-            LOGDBG("got X0U=%.1f, Y0U=%.1f", x, y);
+            if(!coordsRdy) return;
+            coordsRdy = FALSE;
+            X0U = Xtarget; Y0U = Ytarget;
+            DBG("got X0U=%.1f, Y0U=%.1f", X0U, Y0U);
+            LOGDBG("got X0U=%.1f, Y0U=%.1f", X0U, Y0U);
             if(moveU(2*theconf.maxUsteps)) sstatus = SETUP_WAITUMAX;
-            ctr = 0;
+            else{
+                LOGWARN("Can't move U -> max");
+                sstatus = SETUP_INIT;
+            }
         break;
         case SETUP_WAITUMAX: // wait while U moves to UVworkrange
-            if(!aver) return;
-            if(!moving_finished(Ustatus, NULL)) return;
-            if(++ctr < 2) return; // wait for next average coordinates
-            XmU = x; YmU = y;
-            LOGDBG("got XmU=%.1f, YmU=%.1f", x, y);
+            if(!coordsRdy) return;
+            coordsRdy = FALSE;
+            XmU = Xtarget; YmU = Ytarget;
+            LOGDBG("got XmU=%.1f, YmU=%.1f", XmU, YmU);
             if(moveU(-theconf.maxUsteps) && moveV(-theconf.maxVsteps)) sstatus = SETUP_WAITV0;
-            ctr = 0;
+            else{
+                LOGWARN("Can't move U -> mid OR/AND V -> min");
+                sstatus = SETUP_INIT;
+            }
         break;
         case SETUP_WAITV0: // wait while V moves to 0
-            if(!aver) return;
-            if(!moving_finished(Vstatus, NULL)) return;
-            if(++ctr < 2) return; // wait for next average coordinates
-            X0V = x; Y0V = y;
-            LOGDBG("got X0V=%.1f, Y0V=%.1f", x, y);
+            if(!coordsRdy) return;
+            coordsRdy = FALSE;
+            X0V = Xtarget; Y0V = Ytarget;
+            LOGDBG("got X0V=%.1f, Y0V=%.1f", X0V, Y0V);
             if(moveV(2*theconf.maxVsteps)) sstatus = SETUP_WAITVMAX;
-            ctr = 0;
+            else{
+                LOGWARN("Can't move V -> max");
+                sstatus = SETUP_INIT;
+            }
         break;
         case SETUP_WAITVMAX: // wait while V moves to UVworkrange
-            if(!aver) return;
-            if(!moving_finished(Vstatus, NULL)) return;
-            if(++ctr < 2) return; // wait for next average coordinates
-            ctr = 0;
-            XmV = x; YmV = y;
-            LOGDBG("got XmV=%.1f, YmV=%.1f", x, y);
+            if(!coordsRdy) return;
+            coordsRdy = FALSE;
+            XmV = Xtarget; YmV = Ytarget;
+            LOGDBG("got XmV=%.1f, YmV=%.1f", XmV, YmV);
             // calculate
             double dxU = XmU - X0U, dyU = YmU - Y0U, dxV = XmV - X0V, dyV = YmV - Y0V;
             LOGDBG("dxU=%.1f, dyU=%.1f, dxV=%.1f, dyV=%.1f", dxU, dyU, dxV, dyV);
@@ -463,29 +522,27 @@ static void process_setup_stage(double x, double y, int aver){
             double KU = 2 * theconf.maxUsteps / sqU;
             double KV = 2 * theconf.maxVsteps / sqV;
             double sa = dyU/sqU, ca = dxU/sqU, sb = dyV/sqV, cb = dxV/sqV; // sin(alpha) etc
-            // ctg(beta-alpha)=cos(b-a)/sin(b-a)=[cos(b)cos(a)+sin(b)sin(a)]/[sin(b)cos(a)-cos(b)sin(a)]
-            double sba = sb*ca - cb*sa; // sin(beta-alpha)
-            double ctba = (cb*ca + sb*sa) / sba;
-            if(fabs(ctba) < DBL_EPSILON || fabs(sba) < DBL_EPSILON) goto endmoving;
-            LOGDBG("KU=%.4f, KV=%.4f, sa=%.4f, ca=%.4f, sb=%.4f, cb=%.4f, ctba=%.5f, 1/sba=%.5f",
-                   KU, KV, sa, ca, sb, cb, ctba, 1./sba);
+            LOGDBG("KU=%.4f, KV=%.4f, sa=%.4f, ca=%.4f, sb=%.4f, cb=%.4f",
+                   KU, KV, sa, ca, sb, cb);
             /*
-             * U = x*(cos(alpha) - sin(alpha)*ctg(beta-alpha)) + y*(-sin(alpha)-cos(alpha)*ctg(beta-alpha))
-             * V = x*sin(alpha)/sin(beta-alpha) + y*cos(alpha)/sin(beta-alpha)
+             * [dX dY] = M*[dU dV], M = [ca/KU cb/KV; sa/KU sb/KV] ===>
+             * [dU dV] = inv(M)*[dX dY],
+             * inv(M) = 1/(ca/KU*sb/KV - sa/KU*cb/KV)*[sb/KV -cb/KV; -sa/KU ca/KU]
              */
-            theconf.Kxu = KU*(ca - sa*ctba);
-            theconf.Kyu = KU*(-sa - ca*ctba);
-            theconf.Kxv = KV*sa/sba;
-            theconf.Kyv = KV*ca/sba;
+            double mul = 1/(ca/KU*sb/KV - sa/KU*cb/KV);
+            theconf.Kxu = mul*sb/KV;
+            theconf.Kyu = -mul*cb/KV;
+            theconf.Kxv = -mul*sa/KU;
+            theconf.Kyv = mul*ca/KU;
             LOGDBG("Kxu=%g, Kyu=%g; Kxv=%g, Kyv=%g", theconf.Kxu, theconf.Kyu, theconf.Kxv, theconf.Kyv);
             DBG("Now save new configuration");
             saveconf(NULL); // try to store configuration
+            // fallthrough
         endmoving:
             moveV(-theconf.maxVsteps);
             sstatus = SETUP_FINISH;
         break;
         case SETUP_FINISH: // reset current coordinates
-            if(!UVmoving_finished()) return;
             if(!send_message(Usetzero, NULL) || !send_message(Vsetzero, NULL)) return;
             // now inner steppers' counters are in zero position -> set to zero local
             Uposition = Vposition = 0;
@@ -513,7 +570,8 @@ static int process_targetstage(double X, double Y){
     theconf.xtarget = X + theconf.xoff;
     theconf.ytarget = Y + theconf.yoff;
     DBG("Got target coordinates: (%.1f, %.1f)", X, Y);
-    saveconf(FALSE);
+    LOGMSG("Got target coordinates: (%.1f, %.1f)", X, Y);
+    saveconf(NULL);
     nhit = 0; xprev = 0.; yprev = 0.;
     return TRUE;
 }
@@ -530,9 +588,10 @@ static int try2correct(double dX, double dY){
     dU = KCORR*(theconf.Kxu * dX + theconf.Kyu * dY);
     dV = KCORR*(theconf.Kxv * dX + theconf.Kyv * dY);
     int Unew = Uposition + (int)dU, Vnew = Vposition + (int)dV;
-    if(Unew > theconf.maxUsteps || Unew < -theconf.maxUsteps ||
-       Vnew > theconf.maxVsteps || Vnew < -theconf.maxVsteps){
-        // TODO: here we should signal the interface that limit reaced
+    int Unfixed = Unew + Fposition, Vnfixed = Vnew + Fposition; // fixed by focus position
+    if(Unfixed > theconf.maxUsteps || Unfixed < -theconf.maxUsteps ||
+       Vnfixed > theconf.maxVsteps || Vnfixed < -theconf.maxVsteps){
+        // TODO: here we should signal that the limit reached
         LOGWARN("Correction failed, curpos: %d, %d, should move to %d, %d",
                 Uposition, Vposition, Unew, Vnew);
         return FALSE;
@@ -543,79 +602,38 @@ static int try2correct(double dX, double dY){
     return (moveU((int)dU) && moveV((int)dV));
 }
 
-#if 0
-mesg U relmove -35200
-mesg V relmove -35200
-mesg U relmove 16960
-mesg V relmove 16960
-mesg U relmove -500000
-mesg U relmove 100000
-mesg F relmove 32000
-#endif
+// global variable proc_corr
 /**
  * @brief pusi_process_corrections - get XY corrections (in pixels) and move motors to fix them
  * @param X, Y - centroid (x,y) in screen coordinate system
- * @param aver ==1 if X and Y are averaged
  * This function called from improc.c each time the corrections calculated (ONLY IF Xtarget/Ytarget > -1)
  */
-void pusi_process_corrections(double X, double Y, int aver){
-    //DBG("got centroid data: %g, %g", X, Y);
-    static int first = TRUE;
-    double xtg = theconf.xtarget - theconf.xoff, ytg = theconf.ytarget - theconf.yoff;
-    double xdev = X - xtg, ydev = Y - ytg;
-    if(state != PUSI_DISCONN) first = TRUE;
-    switch(state){
-        case PUSI_DISCONN:
-            if(!pusi_connect()){
-                WARN("Can't reconnect");
-            }
-            if(first){
-                LOGWARN("Can't reconnect");
-                first = FALSE;
-            }
-        break;
-        case PUSI_SETUP: // setup axes (before this state set Xtarget/Ytarget in improc.c)
-            process_setup_stage(X, Y, aver);
-        break;
-        case PUSI_GOTOTHEMIDDLE:
-            process_movetomiddle_stage();
-        break;
-        case PUSI_FINDTARGET: // calculate target coordinates
-            if(aver && process_targetstage(X, Y))
-                state = PUSI_RELAX;
-        break;
-        case PUSI_FIX:   // process corrections
-            if(aver){
-                red("GET AVERAGE -> correct\n");
-                if(theconf.xtarget < 1. || theconf.ytarget < 1. || fabs(xdev) < COORDTOLERANCE || fabs(ydev) < COORDTOLERANCE){
-                    DBG("Target coordinates not defined or correction too small");
-                    return;
-                }
-                if(!moving_finished(Ustatus, &Uposition) || !moving_finished(Vstatus, &Vposition)) return;
-                LOGDBG("Current position: U=%d, V=%d, deviations: dX=%.1f, dy=%.1f",
-                       Uposition, Vposition, xdev, ydev);
-                if(!try2correct(xdev, ydev)){
-                    LOGWARN("failed to correct");
-                    fixerr = 1;
-                    // TODO: do something here
-                    DBG("FAILED");
-                } else fixerr = 0;
-            }
-        break;
-        default: // PUSI_RELAX
-            return;
+void pusi_process_corrections(double X, double Y){
+    static bool coordstrusted = TRUE;
+    if(ismoving){ // don't process coordinates when moving
+        coordstrusted = FALSE;
+        coordsRdy = FALSE;
+        return;
     }
+    if(!coordstrusted){ // don't trust first coordinates after moving finished
+        coordstrusted = TRUE;
+        coordsRdy = FALSE;
+        return;
+    }
+    //DBG("got centroid data: %g, %g", X, Y);
+    Xtarget = X; Ytarget = Y;
+    coordsRdy = TRUE;
 }
 
 // try to change state; @return TRUE if OK
-int pusi_setstate(pusistate newstate){
+static int pusi_setstate(pusistate newstate){
     if(newstate == state) return TRUE;
     if(newstate == PUSI_DISCONN){
         pusi_disconnect();
         return TRUE;
     }
     if(state == PUSI_DISCONN){
-        if(!pusi_connect()) return FALSE;
+        if(!pusi_connect_server()) return FALSE;
     }
     if(newstate == PUSI_SETUP || newstate == PUSI_GOTOTHEMIDDLE){
         sstatus = SETUP_INIT;
@@ -624,11 +642,7 @@ int pusi_setstate(pusistate newstate){
     return TRUE;
 }
 
-pusistate pusi_getstate(){
-    return state;
-}
-
-// get current status
+// get current status (global variable stepstatus)
 // return JSON string with different parameters
 char *pusi_status(const char *messageid, char *buf, int buflen){
     int l;
@@ -690,11 +704,11 @@ char *pusi_status(const char *messageid, char *buf, int buflen){
         l = snprintf(bptr, buflen, ", ");
         buflen -= l; bptr += l;
         const char *motors[] = {"Umotor", "Vmotor", "Fmotor"};
-        const char *statuses[] = {Ustatus, Vstatus, Fstatus};
-        int *pos[] = {&Uposition, &Vposition, &Fposition};
+        volatile atomic_bool *mv[] = {&Umoving, &Vmoving, &Fmoving};
+        volatile atomic_int *pos[] = {&Uposition, &Vposition, &Fposition};
         for(int i = 0; i < 3; ++i){
-            const char *stat = "moving";
-            if(moving_finished(statuses[i], pos[i])) stat = "stopping";
+            const char *stat = "stopping";
+            if(*mv[i]) stat = "moving";
             l = snprintf(bptr, buflen, "\"%s\": { \"status\": \"%s\", \"position\": %d }%s",
                          motors[i], stat, *pos[i], (i==2)?"":", ");
             buflen -= l; bptr += l;
@@ -708,7 +722,7 @@ typedef struct{
     const char *str;
     pusistate state;
 } strstate;
-
+// commands from client to change status
 strstate stringstatuses[] = {
     {"disconnect", PUSI_DISCONN},
     {"relax", PUSI_RELAX},
@@ -718,7 +732,8 @@ strstate stringstatuses[] = {
     {"fix", PUSI_FIX},
     {NULL, 0}
 };
-// try to set new status
+
+// try to set new status (global variable stepstatus)
 char *set_pusistatus(const char *newstatus, char *buf, int buflen){
     strstate *s = stringstatuses;
     pusistate newstate = PUSI_UNDEFINED;
@@ -750,18 +765,109 @@ char *set_pusistatus(const char *newstatus, char *buf, int buflen){
     ptr[L-1] = '\n';
     return buf;
 }
-// change focus
+
+// change focus (global variable movefocus)
 char *set_pfocus(const char *newstatus, char *buf, int buflen){
-    if(!moving_finished(Fstatus, &Fposition)){
-        snprintf(buf, buflen, FAIL);
-        return buf;
-    }
     int newval = atoi(newstatus);
     if(newval < theconf.minFpos || newval > theconf.maxFpos){
         snprintf(buf, buflen, FAIL);
     }else{
-        if(!setF(newval)) snprintf(buf, buflen, FAIL);
-        else snprintf(buf, buflen, OK);
+        snprintf(buf, buflen, OK);
+        newfocpos = newval;
+        chfocus = TRUE;
     }
     return buf;
+}
+
+// MAIN THREAD
+static void *pusi_process_states(_U_ void *arg){
+    FNAME();
+    static bool first = TRUE; // flag for logging when can't reconnect
+    while(!stopwork){
+        usleep(10000);
+        // check for moving
+        switch(state){
+            case PUSI_SETUP:
+            case PUSI_GOTOTHEMIDDLE:
+            case PUSI_FIX:
+                if(moving_finished(Ustatus, &Uposition)) Umoving = FALSE;
+                else Umoving = TRUE;
+                if(moving_finished(Vstatus, &Vposition)) Vmoving = FALSE;
+                else Vmoving = TRUE;
+                if(moving_finished(Fstatus, &Fposition)) Fmoving = FALSE;
+                else Fmoving = TRUE;
+                if(Umoving || Vmoving || Fmoving) ismoving = TRUE;
+                else ismoving = FALSE;
+            break;
+            case PUSI_DISCONN:
+                sleep(1);
+                pusi_connect_server();
+            break;
+            default:
+            break;
+        }
+        if(ismoving){
+            coordsRdy = FALSE;
+            continue;
+        }
+        // check request to change focus
+        if(chfocus){
+            chfocus = FALSE;
+            int delta = newfocpos - Fposition;
+            moveF(delta); moveU(delta); moveV(delta);
+            continue;
+        }
+        // if we are here, all U/V/F moving is finished
+        if(state != PUSI_DISCONN) first = TRUE;
+        switch(state){ // pusirobo state machine
+            case PUSI_DISCONN:
+                if(!pusi_connect_server()){
+                    WARNX("Can't reconnect");
+                    if(first){
+                        LOGWARN("Can't reconnect");
+                        first = FALSE;
+                    }
+                    sleep(5);
+                }
+            break;
+            case PUSI_SETUP: // setup axes (before this state set Xtarget/Ytarget in improc.c)
+                process_setup_stage();
+            break;
+            case PUSI_GOTOTHEMIDDLE:
+                process_movetomiddle_stage();
+            break;
+            case PUSI_FINDTARGET: // calculate target coordinates
+                if(coordsRdy){
+                    coordsRdy = FALSE;
+                    if(process_targetstage(Xtarget, Ytarget))
+                        state = PUSI_RELAX;
+                }
+            break;
+            case PUSI_FIX:   // process corrections
+                if(coordsRdy){
+                    coordsRdy = FALSE;
+                    red("GET AVERAGE -> correct\n");
+                    double xtg = theconf.xtarget - theconf.xoff, ytg = theconf.ytarget - theconf.yoff;
+                    double xdev = xtg - Xtarget, ydev = ytg - Ytarget;
+                    double corr = sqrt(xdev*xdev + ydev*ydev);
+                    if(theconf.xtarget < 1. || theconf.ytarget < 1. || corr < COORDTOLERANCE){
+                        DBG("Target coordinates not defined or correction too small, targ: (%.1f, %.1f); corr: %.1f, %.1f (abs: %.1f)",
+                            theconf.xtarget, theconf.ytarget, xdev, ydev, corr);
+                        break;
+                    }
+                    LOGDBG("Current position: U=%d, V=%d, deviations: dX=%.1f, dy=%.1f",
+                           Uposition, Vposition, xdev, ydev);
+                    if(!try2correct(xdev, ydev)){
+                        LOGWARN("failed to correct");
+                        fixerr = 1;
+                        // TODO: do something here
+                        DBG("FAILED");
+                    }else fixerr = 0;
+                }
+            break;
+            default: // PUSI_RELAX
+                break;
+        }
+    }
+    return NULL;
 }
