@@ -217,11 +217,11 @@ confparam *chk_keyval(const char *key, const char *val, key_value *result){
     confparam *par = parvals;
     while(par->name){
         if(strcmp(key, par->name) == 0){
-            DBG("key='%s', par->name='%s'", key, par->name);
+            //DBG("key='%s', par->name='%s'", key, par->name);
             result->type = par->type;
             switch(par->type){
                 case PAR_INT:
-                    DBG("INTEGER");
+                    //DBG("INTEGER");
                     if(!str2int(&result->val.intval, val)){
                         WARNX("Wrong integer value '%s' of parameter '%s'", val, key);
                         return NULL;
@@ -232,12 +232,12 @@ confparam *chk_keyval(const char *key, const char *val, key_value *result){
                                result->val.intval, par->name, par->minval, par->maxval);
                 break;
                 case PAR_DOUBLE:
-                    DBG("DOUBLE");
+                    //DBG("DOUBLE");
                     if(!str2double(&result->val.dblval, val)){
                         WARNX("Wrong double value '%s' of parameter '%s'", val, key);
                         return NULL;
                     }
-                    DBG("val: %g, min: %g, max: %g", result->val.dblval, par->minval, par->maxval);
+                    //DBG("val: %g, min: %g, max: %g", result->val.dblval, par->minval, par->maxval);
                     if(result->val.dblval > par->minval && result->val.dblval < par->maxval)
                         return par;
                     else WARNX("Value (%g) of parameter %s out of range %g..%g",
@@ -300,7 +300,7 @@ int chkconfig(const char *confname){
     int found = 0;
     par = parvals;
     while(par->name){
-        DBG("parvals[]={%s, %d, %d(%g), %d}", par->name, par->type, *((int*)par->ptr), *((double*)par->ptr), par->got);
+        //DBG("parvals[]={%s, %d, %d(%g), %d}", par->name, par->type, *((int*)par->ptr), *((double*)par->ptr), par->got);
         int k = par->got;
         if(!k){
             ++par;

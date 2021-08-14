@@ -444,9 +444,10 @@ int get_stat(const Image *in, int seed, Image **mean, Image **std){
  * @return 0 if error
  */
 int calc_background(Image *img, Imtype *bk){
+    //DBG("image: min=%g, max=%g", img->minval, img->maxval);
     if(img->maxval - img->minval < DBL_EPSILON){
         WARNX("Zero image!");
-        return 0;
+        return FALSE;
     }
     int w = img->width, h = img->height, wh = w*h;
     Imtype min = img->minval, ampl = img->maxval - min;
@@ -472,24 +473,13 @@ int calc_background(Image *img, Imtype *bk){
             modeidx = i;
         }
     //DBG("Mode=%g @ idx%d (N=%d)", ((Imtype)modeidx / 255.)*ampl, modeidx, modeval);
-/*
-    int diff[256] = {0};
-    for(int i = 1; i < 255; ++i) diff[i] = (histogram[i+1]-histogram[i-1])/2;
-    if(modeidx == 0) modeidx = 1;
-    if(modeidx > 253) return NULL; // very bad image: overilluminated
-    int borderidx = modeidx;
-    green("1\n");
-    for(int i = modeidx; i < 255; ++i){ // search bend-point by first derivate
-        printf("%d: %d, %d\n", i, diff[i], diff[i+1]);
-        if(diff[i] >= 0 && diff[i+1] >=0){
-            borderidx = i; break;
-        }
-    }
-*/
     int diff2[256] = {0};
     for(int i = 2; i < 254; ++i) diff2[i] = (histogram[i+2]+histogram[i-2]-2*histogram[i])/4;
     if(modeidx < 2) modeidx = 2;
-    if(modeidx > 253) return 0; // very bad image: overilluminated
+    if(modeidx > 253){
+        WARNX("Overilluminated image");
+        return FALSE; // very bad image: overilluminated
+    }
     int borderidx = modeidx;
    // green("2\n");
     for(int i = modeidx; i < 254; ++i){ // search bend-point by second derivate
@@ -502,8 +492,8 @@ int calc_background(Image *img, Imtype *bk){
     //borderidx = (borderidx + modeidx) / 2;
     Imtype borderval = ((Imtype)borderidx / 255.)*ampl + min;
     if(bk) *bk = borderval;
-    //green("HISTO:\n");
-    //for(int i = 0; i < 256; ++i) printf("%d:\t%d\t%d\n", i, histogram[i], diff2[i]);
+//    green("HISTO:\n");
+//    for(int i = 0; i < 256; ++i) printf("%d:\t%d\t%d\n", i, histogram[i], diff2[i]);
     // calculate values of upper 2% border
 #if 0
     Image *out = Image_sim(img);
@@ -515,5 +505,5 @@ int calc_background(Image *img, Imtype *bk){
     }
     Image_minmax(out);
 #endif
-    return 1;
+    return TRUE;
 }

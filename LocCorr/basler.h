@@ -16,13 +16,12 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 #pragma once
-#ifndef GRASSHOPPER_H__
-#define GRASSHOPPER_H__
+#ifndef BASLER_H__
+#define BASLER_H__
 
 #include "cameracapture.h" // `camera`
+#define BASLER_CAPT_NAME        "basler"
 
-#define GRASSHOPPER_CAPT_NAME   "grasshopper"
+extern camera Basler;
 
-extern camera GrassHopper;
-
-#endif // GRASSHOPPER_H__
+#endif // BASLER_H__

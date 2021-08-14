@@ -33,7 +33,8 @@ typedef enum{
     T_GIF,
     T_JPEG,
     T_PNG,
-    T_CAPT_GRASSHOPPER // capture grasshopper
+    T_CAPT_GRASSHOPPER, // capture grasshopper
+    T_CAPT_BASLER
 } InputType;
 
 void Image_minmax(Image *I);

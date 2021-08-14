@@ -8,22 +8,23 @@ set(VERSION "${MAJOR_VERSION}.${MID_VERSION}.${MINOR_VERSION}")
 project(${PROJ} VERSION ${PROJ_VERSION} LANGUAGES C)
 
 # default flags
-set(CMAKE_C_FLAGS "-O3 -std=gnu99 -march=native")
+set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -O3 -std=gnu99 -march=native -fdata-sections -ffunction-sections")
+SET(CMAKE_EXE_LINKER_FLAGS "-Wl,--gc-sections")
 
 set(CMAKE_COLOR_MAKEFILE ON)
 
 # here is one of two variants: all .c in directory or .c files in list
 aux_source_directory(${CMAKE_CURRENT_SOURCE_DIR} SOURCES)
 
+set(CMAKE_VERBOSE_MAKEFILE "ON")
+
 # cmake -DEBUG=1 -> debugging
 if(DEFINED EBUG AND EBUG EQUAL 1)
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wextra -Wall -Werror -W")
     set(CMAKE_BUILD_TYPE DEBUG)
-    set(CMAKE_VERBOSE_MAKEFILE "ON")
     add_definitions(-DEBUG)
 else()
     set(CMAKE_BUILD_TYPE RELEASE)
-    set(CMAKE_VERBOSE_MAKEFILE "ON")
 endif()
 
 ###### pkgconfig ######
@@ -34,6 +35,7 @@ set(MODULES usefull_macros cfitsio)
 SET(CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR})
 find_package(PkgConfig REQUIRED)
 find_package(FLYCAP    REQUIRED)
+find_package(BASLER    REQUIRED)
 pkg_check_modules(${PROJ} REQUIRED ${MODULES})
 
 include(FindOpenMP)
@@ -60,9 +62,9 @@ message("Install dir prefix: ${CMAKE_INSTALL_PREFIX}")
 # exe file
 add_executable(${PROJ} ${SOURCES})
 # -I
-include_directories(${${PROJ}_INCLUDE_DIRS} ${FLYCAP_INCLUDE_DIRS})
+include_directories(${${PROJ}_INCLUDE_DIRS} ${FLYCAP_INCLUDE_DIRS} ${BASLER_INCLUDE_DIRS})
 # -L
-link_directories(${${PROJ}_LIBRARY_DIRS})
+link_directories(${${PROJ}_LIBRARY_DIRS} ${FLYCAP_LIBRARY_DIRS} ${BASLER_LIBRARY_DIRS})
 # -D
 add_definitions(${CFLAGS} -DLOCALEDIR=\"${LOCALEDIR}\"
     -DPACKAGE_VERSION=\"${VERSION}\" -DGETTEXT_PACKAGE=\"${PROJ}\"
@@ -70,7 +72,7 @@ add_definitions(${CFLAGS} -DLOCALEDIR=\"${LOCALEDIR}\"
     -DMAJOR_VERSION=\"${MAJOR_VESION}\" -DTHREAD_NUMBER=${PROCESSOR_COUNT})
 
 # -l
-target_link_libraries(${PROJ} ${${PROJ}_LIBRARIES} ${FLYCAP_LIBRARIES} -lm)
+target_link_libraries(${PROJ} ${${PROJ}_LIBRARIES} ${FLYCAP_LIBRARIES} ${BASLER_LIBRARIES} -lm)
 
 # Installation of the program
 INSTALL(TARGETS ${PROJ} DESTINATION "bin")

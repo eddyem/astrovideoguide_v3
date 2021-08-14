@@ -27,6 +27,8 @@
 #include <stb/stb_image.h>
 #include <stb/stb_image_write.h>
 
+#include "basler.h"
+#include "cameracapture.h"
 #include "cmdlnopts.h"
 #include "config.h"
 #include "draw.h"
@@ -96,6 +98,7 @@ static InputType imtype(FILE *f){
 InputType chkinput(const char *name){
     DBG("input name: %s", name);
     if(0 == strcmp(name, GRASSHOPPER_CAPT_NAME)) return T_CAPT_GRASSHOPPER;
+    else if(0 == strcmp(name, BASLER_CAPT_NAME)) return T_CAPT_BASLER;
     struct stat fd_stat;
     stat(name, &fd_stat);
     if(S_ISDIR(fd_stat.st_mode)){
@@ -120,6 +123,7 @@ InputType chkinput(const char *name){
 }
 
 Image *u8toImage(uint8_t *data, int width, int height, int stride){
+    FNAME();
     Image *outp = MALLOC(Image, 1);
     outp->width = width;
     outp->height = height;

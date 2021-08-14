@@ -23,7 +23,9 @@
 #include <time.h>
 #include <usefull_macros.h>
 
+#include "basler.h"
 #include "binmorph.h"
+#include "cameracapture.h"
 #include "cmdlnopts.h"
 #include "config.h"
 #include "draw.h"
@@ -163,6 +165,7 @@ process_corrections:
 }
 
 void process_file(Image *I){
+    FNAME();
     static double lastTproc = 0.;
 /*
 #ifdef EBUG
@@ -187,7 +190,7 @@ void process_file(Image *I){
     //DELTA("Save original");
     Imtype bk;
     if(calc_background(I, &bk)){
-        //DBG("backgr = %g", bk);
+        DBG("backgr = %g", bk);
         DELTA("Got background");
         uint8_t *ibin = Im2bin(I, bk);
         DELTA("Made binary");
@@ -290,40 +293,17 @@ void process_file(Image *I){
                         }
                     }
                     FREE(tmpnm);
-                    ++ImNumber;
-                    if(lastTproc > 1.) FPS = 1. / (dtime() - lastTproc);
-                    lastTproc = dtime();
                     FREE(outp);
                 }
                 FREE(Objects);
-                /*
-                Image *c = ST2Im(S, W, H);
-                DELTA("conv size_t -> Ima");
-                save_fits(c, "size_t.fits");
-                Image_free(&c);
-                DELTA("Save size_t");
-                */
-                /*
-                Image *obj = Image_sim(I);
-                OMP_FOR()
-                for(int y = 0; y < H; ++y){
-                    size_t idx = y*W;
-                    Imtype *optr = &obj->data[idx];
-                    Imtype *iptr = &I->data[idx];
-                    size_t *mask = &S[idx];
-                    for(int x = 0; x < W; ++x, ++mask, ++iptr, ++optr){
-                        if(*mask) *optr = *iptr - bk;
-                    }
-                }
-                Image_minmax(obj);
-                save_fits(obj, "object.fits");
-                Image_free(&obj);
-                */
             }else Image_write_jpg(I, GP->outputjpg, theconf.equalize);
             FREE(S);
             FREE(cc);
         }
-    }
+    }else Image_write_jpg(I, GP->outputjpg, theconf.equalize);
+    ++ImNumber;
+    if(lastTproc > 1.) FPS = 1. / (dtime() - lastTproc);
+    lastTproc = dtime();
     DELTA("End");
 }
 
@@ -344,13 +324,19 @@ static char *watchfl(const char *messageid, char *buf, int buflen){
 }
 
 int process_input(InputType tp, char *name){
-    //DBG("process_input(%d, %s)", tp, name);
+    DBG("process_input(%d, %s)", tp, name);
     if(tp == T_DIRECTORY){
         imagedata = watchdr;
         return watch_directory(name, process_file);
-    }else if(tp == T_CAPT_GRASSHOPPER){
-        imagedata = gsimagestatus;
-        return capture_grasshopper(process_file);
+    }else if(tp == T_CAPT_GRASSHOPPER || tp == T_CAPT_BASLER){
+        camera *cam = &GrassHopper;
+        if(tp == T_CAPT_BASLER) cam = &Basler;
+        if(!setCamera(cam)){
+            WARNX("The camera disconnected");
+            LOGWARN("The camera disconnected");
+        }
+        imagedata = camstatus;
+        return camcapture(process_file);
     }
     imagedata = watchfl;
     return watch_file(name, process_file);

@@ -58,7 +58,7 @@ void iffound_default(pid_t pid){
     ERRX("Another copy of this process found, pid=%d. Exit.", pid);
 }
 
-void *procinp_thread(_U_ void* arg){
+static void *procinp_thread(_U_ void* arg){
     int p = process_input(tp, GP->inputname);
     LOGDBG("process_input=%d", p);
     return NULL;
@@ -93,6 +93,9 @@ static InputType chk_inp(const char *name){
         break;
         case T_CAPT_GRASSHOPPER:
             printf("capture grasshopper camera");
+        break;
+        case T_CAPT_BASLER:
+            printf("capture basler camera");
         break;
         default:
             printf("Unsupported type\n");

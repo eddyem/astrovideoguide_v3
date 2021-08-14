@@ -38,9 +38,9 @@
 #define EXPOS_MIN       (0.1)
 #define EXPOS_MAX       (4001.)
 #define GAIN_MIN        (0.)
-#define GAIN_MAX        (33.)
+#define GAIN_MAX        (100.)
 #define BRIGHT_MIN      (0.)
-#define BRIGHT_MAX      (1000.)
+#define BRIGHT_MAX      (10.)
 // max average images counter
 #define NAVER_MAX       (50)
 // coefficients to convert dx,dy to du,dv
