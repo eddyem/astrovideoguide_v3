@@ -38,26 +38,15 @@
 
 volatile atomic_ullong ImNumber = 0; // GLOBAL: counter of processed images
 volatile atomic_bool stopwork = FALSE; // GLOBAL: suicide
-//int autoExposition = 1; // GLOBAL: ==1 if exposition calculation is auto
 
-// GLOBAL: function to get stepper server status
-char *(*stepstatus)(const char *messageid, char *buf, int buflen) = NULL;
-// GLOBAL: set new status
-char *(*setstepstatus)(const char *newstatus, char *buf, int buflen) = NULL;
-// GLOBAL: move focus
-char *(*movefocus)(const char *newstatus, char *buf, int buflen) = NULL;
 // GLOBAL: get image information
-char *(*imagedata)(const char *messageid, char *buf, int buflen);
-// GLOBAL: disconnect stepper server
-void (*stepdisconnect)() = NULL;
+char *(*imagedata)(const char *messageid, char *buf, int buflen) = NULL;
+
+steppersproc *theSteppers = NULL;
 
 static FILE *fXYlog = NULL;
 static double tstart = 0.; // time of logging start
 static double FPS = 0.; // frames per second
-
-
-// function to process calculated corrections
-static void (*proc_corr)(double, double) = NULL;
 
 typedef struct{
     uint32_t area;      // object area in pixels
@@ -150,16 +139,18 @@ static void getDeviation(object *curobj){
     xx /= theconf.naverage; yy /= theconf.naverage;
     Sx = sqrt(xsum2/theconf.naverage - xx*xx);
     Sy = sqrt(ysum2/theconf.naverage - yy*yy);
-    green("\n\n\n Average centroid: X=%g (+-%g), Y=%g (+-%g)\n", xx, Sx, yy, Sy);
+#ifdef EBUG
+    green("\n Average centroid: X=%g (+-%g), Y=%g (+-%g)\n", xx, Sx, yy, Sy);
+#endif
     LOGDBG("getDeviation(): Average centroid: X=%g (+-%g), Y=%g (+-%g)", xx, Sx, yy, Sy);
     averflag = 1;
     if(fXYlog) fprintf(fXYlog, "%.1f\t%.1f\t%.1f\t%.1f", xx, yy, Sx, Sy);
 process_corrections:
-    if(proc_corr && averflag){
+    if(theSteppers && theSteppers->proc_corr && averflag){
         if(Sx > XY_TOLERANCE || Sy > XY_TOLERANCE){
             LOGDBG("Bad value - not process"); // don't run processing for bad data
         }else
-            proc_corr(xx, yy);
+            theSteppers->proc_corr(xx, yy);
     }
     XYnewline();
 }
@@ -248,21 +239,24 @@ void process_file(Image *I){
                     };
                 }
                 DELTA("Labeling");
-                printf("T%zd, N=%d\n", time(NULL), objctr);
+                DBG("T%zd, N=%d\n", time(NULL), objctr);
                 if(objctr > 1){
                     if(theconf.starssort)
                         qsort(Objects, objctr, sizeof(object), compIntens);
                     else
                         qsort(Objects, objctr, sizeof(object), compDist);
                 }
+#ifdef EBUG
                 object *o = Objects;
-                green("%6s\t%6s\t%6s\t%6s\t%6s\t%6s\t%6s\t%6s\n",
-                      "N", "Area", "Mv", "W/H", "Xc", "Yc", "Sx", "Sy");
+                green("%6s\t%6s\t%6s\t%6s\t%6s\t%6s\t%6s\t%6s\t%8s\n",
+                      "N", "Area", "Mv", "W/H", "Xc", "Yc", "Sx", "Sy", "Area/r^2");
                 for(int i = 0; i < objctr; ++i, ++o){
                     // 1.0857 = 2.5/ln(10)
-                    printf("%6d\t%6d\t%6.1f\t%6.1f\t%6.1f\t%6.1f\t%6.1f\t%6.1f\n",
-                           i, o->area, 20.-1.0857*log(o->Isum), o->WdivH, o->xc, o->yc, o->xsigma, o->ysigma);
+                    printf("%6d\t%6d\t%6.1f\t%6.1f\t%6.1f\t%6.1f\t%6.1f\t%6.1f\t%8.1f\n",
+                           i, o->area, 20.-1.0857*log(o->Isum), o->WdivH, o->xc, o->yc,
+                           o->xsigma, o->ysigma, o->area/o->xsigma/o->ysigma);
                 }
+#endif
                 getDeviation(Objects); // calculate dX/dY and process corrections
                 { // prepare image and save jpeg
                     uint8_t *outp = NULL;
@@ -381,11 +375,7 @@ void setpostprocess(const char *name){
             WARNX("Pusiserver unavailable, will check later");
             LOGWARN("Pusiserver unavailable, will check later");
         }
-        stepdisconnect = pusi_stop;
-        proc_corr = pusi_process_corrections;
-        stepstatus = pusi_status;
-        setstepstatus = set_pusistatus;
-        movefocus = set_pfocus;
+        theSteppers = &pusyCANbus;
     }else{
         WARNX("Unknown postprocess \"%s\"", name);
         LOGERR("Unknown postprocess \"%s\"", name);

@@ -32,12 +32,20 @@
 
 extern volatile atomic_bool stopwork;
 extern volatile atomic_ullong ImNumber;
-//extern int autoExposition;
-extern char *(*stepstatus)(const char *messageid, char *buf, int buflen);
-extern char *(*setstepstatus)(const char *newstatus, char *buf, int buflen);
-extern char *(*movefocus)(const char *newstatus, char *buf, int buflen);
+
 extern char *(*imagedata)(const char *messageid, char *buf, int buflen);
-extern void (*stepdisconnect)();
+
+typedef struct{
+    void (*proc_corr)(double, double);
+    char *(*stepstatus)(const char *messageid, char *buf, int buflen);
+    char *(*setstepstatus)(const char *newstatus, char *buf, int buflen);
+    char *(*movefocus)(const char *newstatus, char *buf, int buflen);
+    char *(*moveByU)(const char *val, char *buf, int buflen);
+    char *(*moveByV)(const char *val, char *buf, int buflen);
+    void (*stepdisconnect)();
+} steppersproc;
+
+extern steppersproc* theSteppers;
 
 void process_file(Image *I);
 int  process_input(InputType tp, char *name);

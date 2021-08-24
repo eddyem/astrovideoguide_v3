@@ -28,6 +28,7 @@
 #include "grasshopper.h"
 #include "imagefile.h"
 #include "improc.h"
+#include "median.h"
 
 // pointer to selected camera
 static camera *theCam = NULL;
@@ -102,16 +103,17 @@ void camdisconnect(){
 
 static void calcexpgain(float newexp){
     DBG("recalculate exposition: oldexp=%g, oldgain=%g, newexp=%g", exptime, gain, newexp);
-    if(newexp*1.25 > theconf.minexp){
-        if(gain < gainmax - 1.){ // increase gain first
+    while(newexp*1.25 > theconf.minexp){ // increase gain first
+        if(gain < gainmax - 0.9999){
             gain += 1.;
             newexp /= 1.25;
-        }
-    }else{ // make gain lower
-        if(1.25*newexp < theconf.maxexp && gain > 1.){
+        }else break;
+    }
+    while(newexp < theconf.minexp){
+        if(1.25*newexp < theconf.maxexp && gain > 0.9999){
             gain -= 1.;
             newexp *= 1.25;
-        }
+        }else break;
     }
     if(newexp < theconf.minexp) newexp = theconf.minexp;
     else if(newexp > theconf.maxexp) newexp = theconf.maxexp;
@@ -155,12 +157,12 @@ static void recalcexp(Image *I){
         if(sum100 > 100) break;
     }
     DBG("Sum100=%d, idx100=%d", sum100, idx100);
-    if(idx100 > 200 && idx100 < 250) return; // good values
-    if(idx100 > 250){ // exposure too long
+    if(idx100 > 230 && idx100 < 253) return; // good values
+    if(idx100 > 253){ // exposure too long
         calcexpgain(0.7*exptime);
     }else{ // exposure too short
         if(idx100 > 5)
-            calcexpgain(exptime * 210. / (float)idx100);
+            calcexpgain(exptime * 230. / (float)idx100);
         else
             calcexpgain(exptime * 50.);
     }
@@ -233,6 +235,14 @@ int camcapture(void (*process)(Image*)){
                 brightness = theconf.brightness;
         }
         if(process){
+            if(theconf.medfilt){
+                Image *X = get_median(oIma, theconf.medseed);
+                if(X){
+                    FREE(oIma->data);
+                    FREE(oIma);
+                    oIma = X;
+                }
+            }
             process(oIma);
         }
         FREE(oIma->data);

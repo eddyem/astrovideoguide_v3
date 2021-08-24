@@ -56,7 +56,8 @@ configuration theconf = {
     .minexp=EXPOS_MIN - DBL_EPSILON,
     .fixedexp=EXPOS_MIN,
     .gain = 20.,
-    .intensthres=DEFAULT_INTENSTHRES
+    .intensthres=DEFAULT_INTENSTHRES,
+    .medseed=MIN_MEDIAN_SEED,
 };
 
 // {"", PAR_DOUBLE, (void*)&theconf., 0},
@@ -125,6 +126,14 @@ static confparam parvals[] = {
      "brightness value"},
     {"starssort", PAR_INT, (void*)&theconf.starssort, 0, -DBL_EPSILON, 1.+DBL_EPSILON,
      "stars sorting algorithm: by distance from target (0) or by intensity (1)"},
+    {"medfilt", PAR_INT, (void*)&theconf.medfilt, 0, -DBL_EPSILON, 1.+DBL_EPSILON,
+     "use median filter"},
+    {"medseed", PAR_INT, (void*)&theconf.medseed, 0, MIN_MEDIAN_SEED-DBL_EPSILON, MAX_MEDIAN_SEED+DBL_EPSILON,
+     "median filter radius"},
+    {"fixedbg", PAR_INT, (void*)&theconf.fixedbkg, 0, -DBL_EPSILON, 1.+DBL_EPSILON,
+     "don't calculate background, use fixed value instead"},
+    {"fbglevel", PAR_INT, (void*)&theconf.fixedbkgval, 0, FIXED_BK_MIN-DBL_EPSILON, FIXED_BK_MAX+DBL_EPSILON,
+     "fixed background level"},
     {NULL,  0,  NULL, 0, 0., 0., NULL}
 };
 

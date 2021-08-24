@@ -46,7 +46,7 @@ void signals(int sig){
         DBG("unlink(GP->pidfile)");
         unlink(GP->pidfile);
     }
-    if(stepdisconnect) stepdisconnect();
+    if(theSteppers && theSteppers->stepdisconnect) theSteppers->stepdisconnect();
     DBG("closeXYlog()");
     closeXYlog();
     DBG("EXIT %d", sig);

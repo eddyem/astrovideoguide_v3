@@ -114,6 +114,7 @@ static pthread_mutex_t sendmesg_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 // current steps counters (zero at the middle)
 static volatile atomic_int Uposition = 0, Vposition = 0, Fposition = 0;
+static volatile atomic_int dUmove = 0, dVmove = 0;
 static volatile atomic_bool Umoving = FALSE, Vmoving = FALSE, Fmoving = FALSE;
 static uint8_t fixerr = 0; // ==1 if can't fixed
 
@@ -358,14 +359,14 @@ int pusi_connect(){
 }
 
 // stop processing & disconnect
-void pusi_stop(){
+static void pusi_stop(){
     pthread_join(processingthread, NULL);
     pusi_disconnect();
 }
 
 // return TRUE if motor is stopped
 static int moving_finished(const char *mesgstatus, volatile atomic_int *position){
-    double val;
+    double val = 0.;
     char *ans = NULL;
     int ret = TRUE;
     if(send_message(mesgstatus, &ans) && getparval(PARstatus, ans, &val)){
@@ -608,7 +609,7 @@ static int try2correct(double dX, double dY){
  * @param X, Y - centroid (x,y) in screen coordinate system
  * This function called from improc.c each time the corrections calculated (ONLY IF Xtarget/Ytarget > -1)
  */
-void pusi_process_corrections(double X, double Y){
+static void pusi_process_corrections(double X, double Y){
     static bool coordstrusted = TRUE;
     if(ismoving){ // don't process coordinates when moving
         coordstrusted = FALSE;
@@ -644,7 +645,7 @@ static int pusi_setstate(pusistate newstate){
 
 // get current status (global variable stepstatus)
 // return JSON string with different parameters
-char *pusi_status(const char *messageid, char *buf, int buflen){
+static char *pusi_status(const char *messageid, char *buf, int buflen){
     int l;
     char *bptr = buf;
     const char *s = NULL, *stage = NULL;
@@ -723,7 +724,7 @@ typedef struct{
     pusistate state;
 } strstate;
 // commands from client to change status
-strstate stringstatuses[] = {
+static strstate stringstatuses[] = {
     {"disconnect", PUSI_DISCONN},
     {"relax", PUSI_RELAX},
     {"setup", PUSI_SETUP},
@@ -734,7 +735,7 @@ strstate stringstatuses[] = {
 };
 
 // try to set new status (global variable stepstatus)
-char *set_pusistatus(const char *newstatus, char *buf, int buflen){
+static char *set_pusistatus(const char *newstatus, char *buf, int buflen){
     strstate *s = stringstatuses;
     pusistate newstate = PUSI_UNDEFINED;
     while(s->str){
@@ -766,19 +767,6 @@ char *set_pusistatus(const char *newstatus, char *buf, int buflen){
     return buf;
 }
 
-// change focus (global variable movefocus)
-char *set_pfocus(const char *newstatus, char *buf, int buflen){
-    int newval = atoi(newstatus);
-    if(newval < theconf.minFpos || newval > theconf.maxFpos){
-        snprintf(buf, buflen, FAIL);
-    }else{
-        snprintf(buf, buflen, OK);
-        newfocpos = newval;
-        chfocus = TRUE;
-    }
-    return buf;
-}
-
 // MAIN THREAD
 static void *pusi_process_states(_U_ void *arg){
     FNAME();
@@ -786,26 +774,19 @@ static void *pusi_process_states(_U_ void *arg){
     while(!stopwork){
         usleep(10000);
         // check for moving
-        switch(state){
-            case PUSI_SETUP:
-            case PUSI_GOTOTHEMIDDLE:
-            case PUSI_FIX:
-                if(moving_finished(Ustatus, &Uposition)) Umoving = FALSE;
-                else Umoving = TRUE;
-                if(moving_finished(Vstatus, &Vposition)) Vmoving = FALSE;
-                else Vmoving = TRUE;
-                if(moving_finished(Fstatus, &Fposition)) Fmoving = FALSE;
-                else Fmoving = TRUE;
-                if(Umoving || Vmoving || Fmoving) ismoving = TRUE;
-                else ismoving = FALSE;
-            break;
-            case PUSI_DISCONN:
-                sleep(1);
-                pusi_connect_server();
-            break;
-            default:
-            break;
+        if(state == PUSI_DISCONN){
+            sleep(1);
+            pusi_connect_server();
+            continue;
         }
+        if(moving_finished(Ustatus, &Uposition)) Umoving = FALSE;
+        else Umoving = TRUE;
+        if(moving_finished(Vstatus, &Vposition)) Vmoving = FALSE;
+        else Vmoving = TRUE;
+        if(moving_finished(Fstatus, &Fposition)) Fmoving = FALSE;
+        else Fmoving = TRUE;
+        if(Umoving || Vmoving || Fmoving) ismoving = TRUE;
+        else ismoving = FALSE;
         if(ismoving){
             coordsRdy = FALSE;
             continue;
@@ -815,6 +796,16 @@ static void *pusi_process_states(_U_ void *arg){
             chfocus = FALSE;
             int delta = newfocpos - Fposition;
             moveF(delta); moveU(delta); moveV(delta);
+            continue;
+        }
+        if(dUmove){
+            moveU(dUmove);
+            dUmove = 0;
+            continue;
+        }
+        if(dVmove){
+            moveV(dVmove);
+            dVmove = 0;
             continue;
         }
         // if we are here, all U/V/F moving is finished
@@ -871,3 +862,47 @@ static void *pusi_process_states(_U_ void *arg){
     }
     return NULL;
 }
+
+// change focus (global variable movefocus)
+static char *set_pfocus(const char *newstatus, char *buf, int buflen){
+    int newval = atoi(newstatus);
+    if(newval < theconf.minFpos || newval > theconf.maxFpos){
+        snprintf(buf, buflen, FAIL);
+    }else{
+        snprintf(buf, buflen, OK);
+        newfocpos = newval;
+        chfocus = TRUE;
+    }
+    return buf;
+}
+// move by U and V axis
+static char *Umove(const char *val, char *buf, int buflen){
+    int d = atoi(val);
+    int Unfixed = Uposition + d + Fposition;
+    if(Unfixed > theconf.maxUsteps || Unfixed < -theconf.maxUsteps){
+        snprintf(buf, buflen, FAIL);
+    }
+    dUmove = d;
+    snprintf(buf, buflen, OK);
+    return buf;
+}
+static char *Vmove(const char *val, char *buf, int buflen){
+    int d = atoi(val);
+    int Vnfixed = Vposition + d + Fposition;
+    if(Vnfixed > theconf.maxVsteps || Vnfixed < -theconf.maxVsteps){
+        snprintf(buf, buflen, FAIL);
+    }
+    dVmove = d;
+    snprintf(buf, buflen, OK);
+    return buf;
+}
+
+steppersproc pusyCANbus = {
+    .stepdisconnect = pusi_stop,
+    .proc_corr = pusi_process_corrections,
+    .stepstatus = pusi_status,
+    .setstepstatus = set_pusistatus,
+    .movefocus = set_pfocus,
+    .moveByU = Umove,
+    .moveByV = Vmove,
+};

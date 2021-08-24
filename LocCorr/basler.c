@@ -285,10 +285,10 @@ static int setgain(_U_ float e){
 static int changeformat(frameformat *fmt){
     FNAME();
     if(!isopened) return FALSE;
-    if(!setInt("Width", fmt->w)) return FALSE;
-    if(!setInt("Height", fmt->h)) return FALSE;
-    if(!setInt("OffsetX", fmt->xoff)) return FALSE;
-    if(!setInt("OffsetY", fmt->yoff)) return FALSE;
+    setInt("Width", fmt->w);
+    setInt("Height", fmt->h);
+    setInt("OffsetX", fmt->xoff);
+    setInt("OffsetY", fmt->yoff);
     int64_values i;
     if(getInt("Width", &i)) fmt->w = i.val;
     if(getInt("Height", &i)) fmt->h = i.val;

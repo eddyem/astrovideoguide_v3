@@ -28,6 +28,7 @@
 #include <string.h>
 #include <usefull_macros.h>
 
+#include "config.h"
 #include "imagefile.h"
 #include "median.h"
 
@@ -390,8 +391,8 @@ Image *get_median(const Image *img, int seed){
  * @retur 0 if error
  */
 int get_stat(const Image *in, int seed, Image **mean, Image **std){
-    if(!in) return 0;
-    if(seed < 1 || seed > (in->width - 1)/2 || seed > (in->height - 1)/2) return 0;
+    if(!in) return FALSE;
+    if(seed < 1 || seed > (in->width - 1)/2 || seed > (in->height - 1)/2) return FALSE;
 #ifdef EBUG
     double t0 = dtime();
 #endif
@@ -434,7 +435,7 @@ int get_stat(const Image *in, int seed, Image **mean, Image **std){
         *std = S;
     }
     DBG("time for mean/sigma computation: %gs", dtime() - t0);
-    return 1;
+    return TRUE;
 }
 
 /**
@@ -445,14 +446,19 @@ int get_stat(const Image *in, int seed, Image **mean, Image **std){
  */
 int calc_background(Image *img, Imtype *bk){
     //DBG("image: min=%g, max=%g", img->minval, img->maxval);
+    if(!img || !bk) return FALSE;
     if(img->maxval - img->minval < DBL_EPSILON){
-        WARNX("Zero image!");
+        WARNX("Zero or overilluminated image!");
         return FALSE;
+    }
+    if(theconf.fixedbkg){
+        *bk = theconf.fixedbkg;
+        return TRUE;
     }
     int w = img->width, h = img->height, wh = w*h;
     Imtype min = img->minval, ampl = img->maxval - min;
     int histogram[256] = {0};
-    //DBG("min: %g, max: %g, ampl: %g", min, img->maxval, ampl);
+    DBG("min: %g, max: %g, ampl: %g", min, img->maxval, ampl);
     #pragma omp parallel
     {
         int histogram_private[256] = {0};
@@ -492,8 +498,8 @@ int calc_background(Image *img, Imtype *bk){
     //borderidx = (borderidx + modeidx) / 2;
     Imtype borderval = ((Imtype)borderidx / 255.)*ampl + min;
     if(bk) *bk = borderval;
-//    green("HISTO:\n");
-//    for(int i = 0; i < 256; ++i) printf("%d:\t%d\t%d\n", i, histogram[i], diff2[i]);
+    //green("HISTO:\n");
+    //for(int i = 0; i < 256; ++i) printf("%d:\t%d\t%d\n", i, histogram[i], diff2[i]);
     // calculate values of upper 2% border
 #if 0
     Image *out = Image_sim(img);

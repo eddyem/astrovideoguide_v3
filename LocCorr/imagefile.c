@@ -128,18 +128,25 @@ Image *u8toImage(uint8_t *data, int width, int height, int stride){
     outp->width = width;
     outp->height = height;
     outp->dtype = FLOAT_IMG;
-    uint8_t min = *data, max = min;
-    for(int y = 0; y < height; ++y){
-        uint8_t *ptr = &data[y*stride];
-        for(int x = 0; x < width; ++x){
-            uint8_t p = *ptr++;
-            if(p < min) min = p;
-            else if(p > max) max = p;
+/*
+    int histogram[256] = {0};
+    int wh = width*height;
+    #pragma omp parallel
+    {
+        int histogram_private[256] = {0};
+        #pragma omp for nowait
+        for(int i = 0; i < wh; ++i){
+            ++histogram_private[data[i]];
+        }
+        #pragma omp critical
+        {
+            for(int i=0; i<256; ++i) histogram[i] += histogram_private[i];
         }
     }
-    outp->minval = (Imtype) min;
-    outp->maxval = (Imtype) max;
-    //DBG("\nMAX=%g, MIN=%g\n", outp->maxval, outp->minval);
+    red("HISTO:\n");
+    for(int i = 0; i < 256; ++i) printf("%d:\t%d\n", i, histogram[i]);
+*/
+
     outp->data = MALLOC(Imtype, width*height);
     // flip image updown for FITS coordinate system
     OMP_FOR()
@@ -150,6 +157,7 @@ Image *u8toImage(uint8_t *data, int width, int height, int stride){
             *Out++ = (Imtype)(*In++);
         }
     }
+    Image_minmax(outp);
     return outp;
 }
 

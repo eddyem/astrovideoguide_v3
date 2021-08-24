@@ -74,13 +74,20 @@ static getter getterHandlers[] = {
 
 static char *setstepperstate(const char *state, char *buf, int buflen);
 static char *setfocusstate(const char *state, char *buf, int buflen);
-//static char *setexposition(const char *expos, char *buf, int buflen);
-//static char *setexposmethod(const char *expos, char *buf, int buflen);
+static char *moveU(const char *val, char *buf, int buflen);
+static char *moveV(const char *val, char *buf, int buflen);
 static setter setterHandlers[] = {
     {"stpstate", setstepperstate, "Set given steppers' server state"},
     {"focus", setfocusstate, "Move focus to given value"},
+    {"moveU", moveU, "Relative moving by U axe"},
+    {"moveV", moveV, "Relative moving by V axe"},
     {NULL, NULL, NULL}
 };
+
+static char *retFAIL(char *buf, int buflen){
+    snprintf(buf, buflen, FAIL);
+    return buf;
+}
 
 /**************** functions to process commands ****************/
 // getters
@@ -107,28 +114,32 @@ static char *helpmsg(_U_ const char *messageid, char *buf, int buflen){
     return NULL;
 }
 static char *stepperstatus(const char *messageid, char *buf, int buflen){
-    if(stepstatus) return stepstatus(messageid, buf, buflen);
-    snprintf(buf, buflen, FAIL);
-    return buf;
+    if(theSteppers && theSteppers->stepstatus) return theSteppers->stepstatus(messageid, buf, buflen);
+    return retFAIL(buf, buflen);
 }
 static char *getimagedata(const char *messageid, char *buf, int buflen){
     if(imagedata) return imagedata(messageid, buf, buflen);
-    else snprintf(buf, buflen, FAIL);
-    return buf;
+    return retFAIL(buf, buflen);
 }
 
 // setters
 static char *setstepperstate(const char *state, char *buf, int buflen){
     DBG("set steppersstate to %s", state);
-    if(setstepstatus) return setstepstatus(state, buf, buflen);
-    snprintf(buf, buflen, FAIL);
-    return buf;
+    if(theSteppers && theSteppers->setstepstatus) return theSteppers->setstepstatus(state, buf, buflen);
+    return retFAIL(buf, buflen);
 }
 static char *setfocusstate(const char *state, char *buf, int buflen){
     DBG("move focus to %s", state);
-    if(movefocus) return movefocus(state, buf, buflen);
-    snprintf(buf, buflen, FAIL);
-    return buf;
+    if(theSteppers && theSteppers->movefocus) return theSteppers->movefocus(state, buf, buflen);
+    return retFAIL(buf, buflen);
+}
+static char *moveU(const char *val, char *buf, int buflen){
+    if(theSteppers && theSteppers->moveByU) return theSteppers->moveByU(val, buf, buflen);
+    return retFAIL(buf, buflen);
+}
+static char *moveV(const char *val, char *buf, int buflen){
+    if(theSteppers && theSteppers->moveByV) return theSteppers->moveByU(val, buf, buflen);
+    return retFAIL(buf, buflen);
 }
 
 /*

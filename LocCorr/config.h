@@ -48,6 +48,12 @@
 #define KUVMAX           (5000.)
 // default coefficient for corrections (move to Kdu, Kdv instead of du, dv)
 #define KCORR           (0.97)
+// min/max median seed
+#define MIN_MEDIAN_SEED (1)
+#define MAX_MEDIAN_SEED (7)
+// fixed background
+#define FIXED_BK_MIN    (0)
+#define FIXED_BK_MAX    (250)
 
 // exposition methods: 0 - auto, 1 - fixed
 #define EXPAUTO         (0)
@@ -78,6 +84,10 @@ typedef struct{
     int stpserverport;  // steppers' server port
     int starssort;      // stars sorting algorithm: by distance from target (0) or by intensity (1)
     int expmethod;      // 0 - auto, 1 - fixed
+    int medfilt;        // == 1 to make median filter before calculations
+    int medseed;        // median seed
+    int fixedbkg;       // don't calculate background, use fixed value instead
+    int fixedbkgval;    // value of bk
     // dU = Kxu*dX + Kyu*dY; dV = Kxv*dX + Kyv*dY
     double Kxu; double Kyu;
     double Kxv; double Kyv;

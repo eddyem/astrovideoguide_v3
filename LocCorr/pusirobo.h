@@ -19,17 +19,10 @@
 #ifndef PUSIROBO_H__
 #define PUSIROBO_H__
 
+#include "improc.h"
+
+extern steppersproc pusyCANbus;
+
 // try to connect to local pusirobo server
 int pusi_connect();
-// disconnect
-void pusi_stop();
-// global variable proc_corr
-void pusi_process_corrections(double X, double Y);
-// global variable stepstatus
-char *pusi_status(const char *messageid, char *buf, int buflen);
-// global variable setstepstatus
-char *set_pusistatus(const char *newstatus, char *buf, int buflen);
-// global variable movefocus
-char *set_pfocus(const char *newstatus, char *buf, int buflen);
-
 #endif // PUSIROBO_H__
