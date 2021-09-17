@@ -17,6 +17,7 @@
  */
 #define _GNU_SOURCE
 #include <arpa/inet.h>
+#include <inttypes.h>
 #include <math.h>
 #include <netdb.h>
 #include <pthread.h>
@@ -45,6 +46,22 @@
 #define registerUaxe        "register U 0x581 stepper"
 #define registerVaxe        "register V 0x582 stepper"
 #define registerFocus       "register F 0x583 stepper"
+#define registerRelay       "register R 1 raw"
+#define RelayCmd            "mesg R 1"
+#define RelayAns            "#0x001"
+static const int relaySetter = 0x80; // add this to command of setter
+// relay commands:
+typedef enum{
+    R_PING = 0,
+    R_RELAY,
+    R_PWM,
+    R_ADC,
+    R_MCU,
+    R_LED,
+    R_BTNS,
+    R_TIME,
+    R_ERRCMD
+} relaycommands;
 #define setUspeed           "mesg U maxspeed 22400"
 #define setVspeed           "mesg V maxspeed 22400"
 #define setFspeed           "mesg F maxspeed 12800"
@@ -95,6 +112,13 @@ typedef enum{
     SETUP_FINISH
 } setupstatus;
 static _Atomic setupstatus sstatus = SETUP_NONE; // setup state
+
+typedef struct{
+    uint8_t relays;
+    uint8_t PWM[3];
+    uint8_t buttons[4];
+} relaystate;
+static _Atomic relaystate relay;
 
 static pusistate state = PUSI_DISCONN;   // server state
 // the `ismoving` flag allows not to make corrections with bad images made when moving
@@ -260,6 +284,53 @@ static int send_message(const char *msg, char **ans){
     return r;
 }
 
+/**
+ * @brief getRansArg - check relay answer & return args
+ * @param ans - answer
+ * @param buf - full buffer
+ * @return amount of args found (0 - if answer is wrong or no n'th arg found)
+ */
+static int getRansArg(char *ans, uint8_t buf[8]){
+    //DBG("check relay answer, ans: %s", ans);
+    if(!ans) return 0;
+    if(strncmp(ans, RelayAns, sizeof(RelayAns)-1)) return 0; // bad answer
+    ans += sizeof(RelayAns);
+    int got = sscanf(ans, "%hhx %hhx %hhx %hhx %hhx %hhx %hhx %hhx", &buf[0], &buf[1], &buf[2], &buf[3], &buf[4], &buf[5], &buf[6], &buf[7]);
+    //DBG("got ans: %d, arg0..2=%u, %u, %u", got, buf[0], buf[1], buf[2]);
+    return got;
+}
+
+/**
+ * @brief chkRelay - check relay state & change `relay` variable
+ * @return FALSE if failed
+ */
+static int chkRelay(){
+    char *ans = NULL;
+    char buf[512];
+    uint8_t canbuf[8];
+    relaystate r = {0};
+    int ret = FALSE;
+    snprintf(buf, 511, "%s %d", RelayCmd, R_RELAY);
+    if(send_message(buf, &ans) && 2 == getRansArg(ans, canbuf) && canbuf[0] == R_RELAY){
+        r.relays = canbuf[1];
+    }else goto rtn;
+    snprintf(buf, 511, "%s %d", RelayCmd, R_PWM);
+    if(send_message(buf, &ans) && 4 == getRansArg(ans, canbuf) && canbuf[0] == R_PWM){
+        memcpy(r.PWM, canbuf+1, 3);
+    }else goto rtn;
+    for(int btn = 0; btn < 4; ++btn){
+        snprintf(buf, 511, "%s %d %d", RelayCmd, R_BTNS, btn);
+        if(send_message(buf, &ans) && 8 == getRansArg(ans, canbuf) && canbuf[0] == R_BTNS){
+            r.buttons[btn] = canbuf[2];
+        }else goto rtn;
+    }
+    relay = r;
+    ret = TRUE;
+rtn:
+    FREE(ans);
+    return ret;
+}
+
 static void send_message_nocheck(const char *msg){
     if(!msg || sockfd < 0) return;
     size_t L = strlen(msg);
@@ -331,7 +402,9 @@ static int pusi_connect_server(){
     send_message_nocheck(registerUaxe);
     send_message_nocheck(registerVaxe);
     send_message_nocheck(registerFocus);
+    send_message_nocheck(registerRelay);
     int retval = TRUE;
+    if(!chkRelay()) retval = FALSE;
     if(!setSpeed(setUspeed, "U")) retval = FALSE;
     if(!setSpeed(setVspeed, "V")) retval = FALSE;
     if(!setSpeed(setFspeed, "F")) retval = FALSE;
@@ -401,6 +474,7 @@ static int move_motor(const char *movecmd, int s){
         WARNX("can't send message");
         LOGDBG("can't send message");
         pusi_disconnect();
+        FREE(ans);
         return FALSE;
     }
     int ret = TRUE;
@@ -710,8 +784,19 @@ static char *pusi_status(const char *messageid, char *buf, int buflen){
         for(int i = 0; i < 3; ++i){
             const char *stat = "stopping";
             if(*mv[i]) stat = "moving";
-            l = snprintf(bptr, buflen, "\"%s\": { \"status\": \"%s\", \"position\": %d }%s",
-                         motors[i], stat, *pos[i], (i==2)?"":", ");
+            l = snprintf(bptr, buflen, "\"%s\": { \"status\": \"%s\", \"position\": %d }, ",
+                         motors[i], stat, *pos[i]);
+            buflen -= l; bptr += l;
+        }
+        relaystate r = relay;
+        l = snprintf(bptr, buflen, "\"relay\": %d, ", r.relays);
+        buflen -= l; bptr += l;
+        for(int p = 0; p < 3; ++p){
+            l = snprintf(bptr, buflen, "\"PWM%d\": %d, ", p, r.PWM[p]);
+            buflen -= l; bptr += l;
+        }
+        for(int b = 0; b < 4; ++b){
+            l = snprintf(bptr, buflen, "\"button%d\": %d%s", b, r.buttons[b], (b==3)?"":", ");
             buflen -= l; bptr += l;
         }
     }
@@ -779,6 +864,8 @@ static void *pusi_process_states(_U_ void *arg){
             pusi_connect_server();
             continue;
         }
+        // check relay
+        chkRelay();
         if(moving_finished(Ustatus, &Uposition)) Umoving = FALSE;
         else Umoving = TRUE;
         if(moving_finished(Vstatus, &Vposition)) Vmoving = FALSE;
@@ -896,6 +983,36 @@ static char *Vmove(const char *val, char *buf, int buflen){
     snprintf(buf, buflen, OK);
     return buf;
 }
+static char *relaycmd(const char *val, char *buf, int buflen){
+    const char *ans = FAIL;
+    char *eq = NULL, *par = strdup(val);
+    char mbuf[512];
+    relaystate r = relay;
+    if((eq = strchr(par, '='))){
+        *eq++ = 0;
+        int v = atoi(eq), tmpno = 0;
+        if(1 == sscanf(par, "R%d", &tmpno)){ // relay command
+            if(tmpno == 1 || tmpno == 0){
+                int rval = r.relays;
+                if(v) rval |= 1<<tmpno;
+                else rval &= ~(1<<tmpno);
+                green("Relay %d -> %d", r.relays, rval);
+                snprintf(mbuf, 511, "%s %d %d", RelayCmd, R_RELAY + relaySetter, rval);
+                if(send_message(mbuf, NULL)) ans = OK;
+            }
+        }else if(1 == sscanf(par, "PWM%d", &tmpno)){ // PWM command
+            if(tmpno >= 0 && tmpno < 4 && v > -1 && v < 256){
+                green("PWM %d -> %d\n", tmpno, v);
+                r.PWM[tmpno] = v;
+                snprintf(mbuf, 511, "%s %d %u %u %u", RelayCmd, R_PWM + relaySetter, r.PWM[0], r.PWM[1], r.PWM[2]);
+                if(send_message(mbuf, NULL)) ans = OK;
+            }
+        }
+    }
+    FREE(par);
+    snprintf(buf, buflen, "%s", ans);
+    return buf;
+}
 
 steppersproc pusyCANbus = {
     .stepdisconnect = pusi_stop,
@@ -905,4 +1022,5 @@ steppersproc pusyCANbus = {
     .movefocus = set_pfocus,
     .moveByU = Umove,
     .moveByV = Vmove,
+    .relay = relaycmd,
 };

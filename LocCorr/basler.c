@@ -111,7 +111,7 @@ static int getBoolean(const char *featureName, _Bool *val){
     if(!chkNode(&hNode, featureName, BooleanNode, FALSE)) return FALSE;
     if(!val) return TRUE;
     PYLONFN(GenApiBooleanGetValue, hNode, val);
-    DBG("Get boolean: %s = %s", featureName, val ? "true" : "false");
+    //DBG("Get boolean: %s = %s", featureName, val ? "true" : "false");
     return TRUE;
 }
 static int getInt(char *featureName, int64_values *val){
@@ -123,7 +123,7 @@ static int getInt(char *featureName, int64_values *val){
     PYLONFN(GenApiIntegerGetMax, hNode, &val->max);
     PYLONFN(GenApiIntegerGetInc, hNode, &val->incr);
     PYLONFN(GenApiIntegerGetValue, hNode, &val->val);
-    DBG("Get integer %s = %ld: min = %ld, max = %ld, incr = %ld", featureName, val->val, val->min, val->max, val->incr);
+    //DBG("Get integer %s = %ld: min = %ld, max = %ld, incr = %ld", featureName, val->val, val->min, val->max, val->incr);
     return TRUE;
 }
 static int getFloat(char *featureName, float_values *val){
@@ -134,7 +134,7 @@ static int getFloat(char *featureName, float_values *val){
     PYLONFN(GenApiFloatGetMin, hNode, &val->min);
     PYLONFN(GenApiFloatGetMax, hNode, &val->max);
     PYLONFN(GenApiFloatGetValue, hNode, &val->val);
-    DBG("Get float %s = %g: min = %g, max = %g", featureName, val->val, val->min, val->max);
+    //DBG("Get float %s = %g: min = %g, max = %g", featureName, val->val, val->min, val->max);
     return TRUE;
 }
 

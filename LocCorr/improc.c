@@ -122,7 +122,7 @@ static void getDeviation(object *curobj){
     Xc[counter] = curobj->xc; Yc[counter] = curobj->yc;
     if(fXYlog){ // make log record
         fprintf(fXYlog, "%.2f\t%.1f\t%.1f\t%.1f\t%.1f\t%.1f\t",
-                dtime() - tstart, curobj->xc, curobj->yc,
+                dtime(), curobj->xc, curobj->yc,
                 curobj->xsigma, curobj->ysigma, curobj->WdivH);
     }
     //DBG("counter = %d", counter);

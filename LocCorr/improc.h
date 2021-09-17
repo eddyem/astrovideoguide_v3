@@ -24,7 +24,7 @@
 #include "imagefile.h"
 
 // tolerance of deviations by X and Y axis (if sigmaX or sigmaY greater, values considered to be wrong)
-#define XY_TOLERANCE                (1.)
+#define XY_TOLERANCE                (5.)
 
 #define PUSIROBO_POSTPROC   "pusirobo"
 // how many frames will be averaged to count image deviation
@@ -42,6 +42,7 @@ typedef struct{
     char *(*movefocus)(const char *newstatus, char *buf, int buflen);
     char *(*moveByU)(const char *val, char *buf, int buflen);
     char *(*moveByV)(const char *val, char *buf, int buflen);
+    char *(*relay)(const char *val, char *buf, int buflen);
     void (*stepdisconnect)();
 } steppersproc;
 

@@ -76,11 +76,13 @@ static char *setstepperstate(const char *state, char *buf, int buflen);
 static char *setfocusstate(const char *state, char *buf, int buflen);
 static char *moveU(const char *val, char *buf, int buflen);
 static char *moveV(const char *val, char *buf, int buflen);
+static char *relaycmd(const char *val, char *buf, int buflen);
 static setter setterHandlers[] = {
     {"stpstate", setstepperstate, "Set given steppers' server state"},
     {"focus", setfocusstate, "Move focus to given value"},
     {"moveU", moveU, "Relative moving by U axe"},
     {"moveV", moveV, "Relative moving by V axe"},
+    {"relay", relaycmd, "Send relay commands (Rx=0/1, PWMX=0..255)"},
     {NULL, NULL, NULL}
 };
 
@@ -141,7 +143,10 @@ static char *moveV(const char *val, char *buf, int buflen){
     if(theSteppers && theSteppers->moveByV) return theSteppers->moveByU(val, buf, buflen);
     return retFAIL(buf, buflen);
 }
-
+static char *relaycmd(const char *val, char *buf, int buflen){
+    if(theSteppers && theSteppers->relay) return theSteppers->relay(val, buf, buflen);
+    return retFAIL(buf, buflen);
+}
 /*
 static char *rmnl(const char *msg, char *buf, int buflen){
     strncpy(buf, msg, buflen);
@@ -166,6 +171,7 @@ static char *processCommand(const char msg[BUFLEN], char *ans, int anslen){
         DBG("got KEY '%s' with value '%s'", kv, value);
         key_value result;
         par = chk_keyval(kv, value, &result);
+        FREE(kv);
         if(par){
             switch(par->type){
                 case PAR_INT:
@@ -191,7 +197,6 @@ static char *processCommand(const char msg[BUFLEN], char *ans, int anslen){
                 ++s;
             }
         }
-        FREE(kv);
     }else{
         getter *g = getterHandlers;
         while(g->command){
