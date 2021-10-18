@@ -21,13 +21,13 @@
 #include <stdbool.h>
 #include <string.h>
 #include <time.h>
-#include <usefull_macros.h>
 
 #include "basler.h"
 #include "binmorph.h"
 #include "cameracapture.h"
 #include "cmdlnopts.h"
 #include "config.h"
+#include "debug.h"
 #include "draw.h"
 #include "grasshopper.h"
 #include "fits.h"
@@ -47,6 +47,7 @@ steppersproc *theSteppers = NULL;
 static FILE *fXYlog = NULL;
 static double tstart = 0.; // time of logging start
 static double FPS = 0.; // frames per second
+static float xc = -1., yc = -1.; // center coordinates
 
 typedef struct{
     uint32_t area;      // object area in pixels
@@ -115,7 +116,7 @@ static void XYnewline(){
 
 static void getDeviation(object *curobj){
     int averflag = 0;
-    static double Xc[MAX_AVERAGING_ARRAY_SIZE], Yc[MAX_AVERAGING_ARRAY_SIZE];
+    static double Xc[NAVER_MAX+1], Yc[NAVER_MAX+1];
     double xx = curobj->xc, yy = curobj->yc, xsum2 = 0., ysum2 = 0.;
     double Sx = 0., Sy = 0.;
     static int counter = 0;
@@ -126,23 +127,24 @@ static void getDeviation(object *curobj){
                 curobj->xsigma, curobj->ysigma, curobj->WdivH);
     }
     //DBG("counter = %d", counter);
-    if(++counter != theconf.naverage){
+    if(++counter < theconf.naverage){
         goto process_corrections;
     }
     // it's time to calculate average deviations
-    counter = 0; xx = 0.; yy = 0.;
-    for(int i = 0; i < theconf.naverage; ++i){
+    xx = 0.; yy = 0.;
+    for(int i = 0; i < counter; ++i){
         double x = Xc[i], y = Yc[i];
         xx += x; yy += y;
         xsum2 += x*x; ysum2 += y*y;
     }
-    xx /= theconf.naverage; yy /= theconf.naverage;
-    Sx = sqrt(xsum2/theconf.naverage - xx*xx);
-    Sy = sqrt(ysum2/theconf.naverage - yy*yy);
+    xx /= counter; yy /= counter;
+    Sx = sqrt(xsum2/counter - xx*xx);
+    Sy = sqrt(ysum2/counter - yy*yy);
+    counter = 0;
 #ifdef EBUG
-    green("\n Average centroid: X=%g (+-%g), Y=%g (+-%g)\n", xx, Sx, yy, Sy);
+    green("\n Average centroid: X=%.1f (+-%.1f), Y=%.1f (+-%.1f)\n", xx, Sx, yy, Sy);
 #endif
-    LOGDBG("getDeviation(): Average centroid: X=%g (+-%g), Y=%g (+-%g)", xx, Sx, yy, Sy);
+    LOGDBG("getDeviation(): Average centroid: X=%.1f (+-%.1f), Y=%.1f (+-%.1f)", xx, Sx, yy, Sy);
     averflag = 1;
     if(fXYlog) fprintf(fXYlog, "%.1f\t%.1f\t%.1f\t%.1f", xx, yy, Sx, Sy);
 process_corrections:
@@ -156,7 +158,6 @@ process_corrections:
 }
 
 void process_file(Image *I){
-    FNAME();
     static double lastTproc = 0.;
 /*
 #ifdef EBUG
@@ -176,12 +177,11 @@ void process_file(Image *I){
         return;
     }
     int W = I->width, H = I->height;
-    if(!I->dtype) I->dtype = FLOAT_IMG;
     //save_fits(I, "fitsout.fits");
     //DELTA("Save original");
     Imtype bk;
     if(calc_background(I, &bk)){
-        DBG("backgr = %g", bk);
+        DBG("backgr = %d", bk);
         DELTA("Got background");
         uint8_t *ibin = Im2bin(I, bk);
         DELTA("Made binary");
@@ -201,14 +201,14 @@ void process_file(Image *I){
             ConnComps *cc = NULL;
             size_t *S = cclabel4(opn, W, H, &cc);
             FREE(opn);
-            if(cc->Nobj > 1){
+            if(cc->Nobj > 1){ // Nobj = amount of objects + 1
+                DBGLOG("Nobj=%d", cc->Nobj-1);
                 object *Objects = MALLOC(object, cc->Nobj-1);
                 int objctr = 0;
                 for(size_t i = 1; i < cc->Nobj; ++i){
                     Box *b = &cc->boxes[i];
                     double wh = ((double)b->xmax - b->xmin)/(b->ymax - b->ymin);
                     //DBG("Obj# %zd: wh=%g, area=%d", i, wh, b->area);
-                    // TODO: change magick numbers to parameters
                     if(wh < theconf.minwh || wh > theconf.maxwh) continue;
                     if((int)b->area < theconf.minarea || (int)b->area > theconf.maxarea) continue;
                     double xc = 0., yc = 0.;
@@ -239,25 +239,27 @@ void process_file(Image *I){
                     };
                 }
                 DELTA("Labeling");
-                DBG("T%zd, N=%d\n", time(NULL), objctr);
+                DBGLOG("T%.2f, N=%d\n", dtime(), objctr);
                 if(objctr > 1){
                     if(theconf.starssort)
                         qsort(Objects, objctr, sizeof(object), compIntens);
                     else
                         qsort(Objects, objctr, sizeof(object), compDist);
                 }
+                if(objctr){
 #ifdef EBUG
-                object *o = Objects;
-                green("%6s\t%6s\t%6s\t%6s\t%6s\t%6s\t%6s\t%6s\t%8s\n",
-                      "N", "Area", "Mv", "W/H", "Xc", "Yc", "Sx", "Sy", "Area/r^2");
-                for(int i = 0; i < objctr; ++i, ++o){
-                    // 1.0857 = 2.5/ln(10)
-                    printf("%6d\t%6d\t%6.1f\t%6.1f\t%6.1f\t%6.1f\t%6.1f\t%6.1f\t%8.1f\n",
-                           i, o->area, 20.-1.0857*log(o->Isum), o->WdivH, o->xc, o->yc,
-                           o->xsigma, o->ysigma, o->area/o->xsigma/o->ysigma);
-                }
+                    object *o = Objects;
+                    green("%6s\t%6s\t%6s\t%6s\t%6s\t%6s\t%6s\t%6s\t%8s\n",
+                          "N", "Area", "Mv", "W/H", "Xc", "Yc", "Sx", "Sy", "Area/r^2");
+                    for(int i = 0; i < objctr; ++i, ++o){
+                        // 1.0857 = 2.5/ln(10)
+                        printf("%6d\t%6d\t%6.1f\t%6.1f\t%6.1f\t%6.1f\t%6.1f\t%6.1f\t%8.1f\n",
+                               i, o->area, 20.-1.0857*log(o->Isum), o->WdivH, o->xc, o->yc,
+                               o->xsigma, o->ysigma, o->area/o->xsigma/o->ysigma);
+                    }
 #endif
-                getDeviation(Objects); // calculate dX/dY and process corrections
+                    getDeviation(Objects); // calculate dX/dY and process corrections
+                }
                 { // prepare image and save jpeg
                     uint8_t *outp = NULL;
                     if(theconf.equalize)
@@ -265,7 +267,7 @@ void process_file(Image *I){
                     else
                         outp = linear(I, 3);
                     static Pattern *cross = NULL;
-                    if(!cross) cross = Pattern_cross(33, 33);
+                    if(!cross) cross = Pattern_xcross(33, 33);
                     Img3 i3 = {.data = outp, .w = I->width, .h = H};
                     // draw fiber center position
                     Pattern_draw3(&i3, cross, theconf.xtarget-theconf.xoff, H-(theconf.ytarget-theconf.yoff), C_B);
@@ -273,11 +275,12 @@ void process_file(Image *I){
                         int H = I->height;
                         // draw current star centroid
                         Pattern_draw3(&i3, cross, Objects[0].xc, H-Objects[0].yc, C_G);
+                        xc = Objects[0].xc;
+                        yc = Objects[0].yc;
                         // draw other centroids
                         for(int i = 1; i < objctr; ++i)
                             Pattern_draw3(&i3, cross, Objects[i].xc, H-Objects[i].yc, C_R);
-                        // Pattern_free(&cross); don't free - static variable!
-                    }
+                    }else{xc = -1.; yc = -1.;}
                     char *tmpnm = MALLOC(char, strlen(GP->outputjpg) + 5);
                     sprintf(tmpnm, "%s-tmp", GP->outputjpg);
                     if(stbi_write_jpg(tmpnm, I->width, I->height, 3, outp, 95)){
@@ -290,7 +293,11 @@ void process_file(Image *I){
                     FREE(outp);
                 }
                 FREE(Objects);
-            }else Image_write_jpg(I, GP->outputjpg, theconf.equalize);
+            }else{
+                xc = -1.; yc = -1.;
+                Image_write_jpg(I, GP->outputjpg, theconf.equalize);
+            }
+            DBGLOG("Image saved");
             FREE(S);
             FREE(cc);
         }
@@ -306,8 +313,8 @@ static char *localimages(const char *messageid, int isdir, char *buf, int buflen
     if(!impath){
         if(!realpath(GP->outputjpg, impath)) impath = strdup(GP->outputjpg);
     }
-    snprintf(buf, buflen, "{ \"%s\": \"%s\", \"camstatus\": \"watch %s\", \"impath\": \"%s\"}",
-             MESSAGEID, messageid, isdir ? "directory" : "file", impath);
+    snprintf(buf, buflen, "{ \"%s\": \"%s\", \"camstatus\": \"watch %s\", \"impath\": \"%s\", \"xcenter\": %.1f, \"ycenter\": %.1f }",
+             MESSAGEID, messageid, isdir ? "directory" : "file", impath, xc, yc);
     return buf;
 }
 static char *watchdr(const char *messageid, char *buf, int buflen){
@@ -383,3 +390,8 @@ void setpostprocess(const char *name){
 }
 
 double getFramesPerS(){ return FPS; }
+
+void getcenter(float *x, float *y){
+    if(x) *x = xc;
+    if(y) *y = yc;
+}

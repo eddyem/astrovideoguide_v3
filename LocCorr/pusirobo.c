@@ -26,9 +26,9 @@
 #include <string.h>
 #include <sys/types.h>
 #include <sys/socket.h>
-#include <usefull_macros.h>
 
 #include "config.h"
+#include "debug.h"
 #include "improc.h" // global variable stopwork
 #include "pusirobo.h"
 #include "socket.h"
@@ -327,7 +327,7 @@ static int chkRelay(){
     relay = r;
     ret = TRUE;
 rtn:
-    FREE(ans);
+    free(ans);
     return ret;
 }
 
@@ -357,7 +357,7 @@ static int setSpeed(const char *mesg, const char *name){
         LOGERR("no %s motor", name);
         retval = FALSE;
     }
-    FREE(ans);
+    if(ans) free(ans);
     return retval;
 }
 
@@ -403,11 +403,11 @@ static int pusi_connect_server(){
     send_message_nocheck(registerVaxe);
     send_message_nocheck(registerFocus);
     send_message_nocheck(registerRelay);
-    int retval = TRUE;
-    if(!chkRelay()) retval = FALSE;
-    if(!setSpeed(setUspeed, "U")) retval = FALSE;
-    if(!setSpeed(setVspeed, "V")) retval = FALSE;
-    if(!setSpeed(setFspeed, "F")) retval = FALSE;
+    int retval = FALSE;
+    if(chkRelay()) retval = TRUE;
+    if(setSpeed(setUspeed, "U")) retval = TRUE;
+    if(setSpeed(setVspeed, "V")) retval = TRUE;
+    if(setSpeed(setFspeed, "F")) retval = TRUE;
     if(!retval) pusi_disconnect();
     else{
         state = PUSI_RELAX;
@@ -460,7 +460,7 @@ static int moving_finished(const char *mesgstatus, volatile atomic_int *position
             LOGDBG("%s not found in '%s'", CURPOSstatus, ans);
         }
     }
-    FREE(ans);
+    if(ans) free(ans);
     return ret;
 }
 
@@ -483,7 +483,7 @@ static int move_motor(const char *movecmd, int s){
         LOGWARN("NO OK in %s", ans);
         ret = FALSE;
     }
-    FREE(ans);
+    if(ans) free(ans);
     return ret;
 }
 
@@ -968,6 +968,7 @@ static char *Umove(const char *val, char *buf, int buflen){
     int Unfixed = Uposition + d + Fposition;
     if(Unfixed > theconf.maxUsteps || Unfixed < -theconf.maxUsteps){
         snprintf(buf, buflen, FAIL);
+        return buf;
     }
     dUmove = d;
     snprintf(buf, buflen, OK);
@@ -978,6 +979,7 @@ static char *Vmove(const char *val, char *buf, int buflen){
     int Vnfixed = Vposition + d + Fposition;
     if(Vnfixed > theconf.maxVsteps || Vnfixed < -theconf.maxVsteps){
         snprintf(buf, buflen, FAIL);
+        return buf;
     }
     dVmove = d;
     snprintf(buf, buflen, OK);
@@ -1009,7 +1011,7 @@ static char *relaycmd(const char *val, char *buf, int buflen){
             }
         }
     }
-    FREE(par);
+    free(par);
     snprintf(buf, buflen, "%s", ans);
     return buf;
 }

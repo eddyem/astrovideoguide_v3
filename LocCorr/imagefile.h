@@ -20,8 +20,24 @@
 #define IMAGEFILE_H__
 
 #include <stdint.h>
+#include <stdlib.h>  // size_t
 
-#include "fits.h"
+#ifndef OMP_FOR
+#define Stringify(x) #x
+#define OMP_FOR(x) _Pragma(Stringify(omp parallel for x))
+#endif
+
+typedef uint8_t Imtype; // maybe float or double only
+
+typedef struct{
+    int width;			// width
+    int height;			// height
+    Imtype *data;		// picture data
+    Imtype minval;      // extremal data values
+    Imtype maxval;
+    char **keylist;		// list of options for each key
+    size_t keynum;		// full number of keys (size of *keylist)
+} Image;
 
 // input file/directory type
 typedef enum{
@@ -46,11 +62,13 @@ Image *Image_new(int w, int h);
 Image *Image_sim(const Image *i);
 void Image_free(Image **I);
 int Image_write_jpg(const Image *I, const char *name, int equalize);
+size_t *get_histogram(const Image *I);
+int calc_background(const Image *img, Imtype *bk);
 
-Image *u8toImage(uint8_t *data, int width, int height, int stride);
-Image *bin2Im(uint8_t *image, int W, int H);
+Image *u8toImage(const uint8_t *data, int width, int height, int stride);
+Image *bin2Im(const uint8_t *image, int W, int H);
 uint8_t *Im2bin(const Image *im, Imtype bk);
-size_t *bin2ST(uint8_t *image, int W, int H);
-Image *ST2Im(size_t *image, int W, int H);
+size_t *bin2ST(const uint8_t *image, int W, int H);
+//Image *ST2Im(const size_t *image, int W, int H);
 
 #endif // IMAGEFILE_H__

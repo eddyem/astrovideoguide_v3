@@ -23,6 +23,12 @@ OMP_FOR()
 for(int y = 1; y < h; y++)
 #endif
 {
+#ifdef IM_UP
+    int y = 0;
+#endif
+#ifdef IM_DOWN
+    int y = h;
+#endif
     uint8_t *iptr = &image[W0*y];
     uint8_t *optr = &ret[W0*y];
     // x=0

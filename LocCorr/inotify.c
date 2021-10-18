@@ -23,8 +23,8 @@
 #include <sys/inotify.h>
 #include <sys/select.h>
 #include <unistd.h>
-#include <usefull_macros.h>
 
+#include "debug.h"
 #include "imagefile.h"
 
 static char filenm[FILENAME_MAX];

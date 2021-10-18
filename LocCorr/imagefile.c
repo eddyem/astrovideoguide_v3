@@ -22,7 +22,6 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <unistd.h>
-#include <usefull_macros.h>
 
 #include <stb/stb_image.h>
 #include <stb/stb_image_write.h>
@@ -31,7 +30,9 @@
 #include "cameracapture.h"
 #include "cmdlnopts.h"
 #include "config.h"
+#include "debug.h"
 #include "draw.h"
+#include "fits.h"
 #include "grasshopper.h"
 #include "imagefile.h"
 #include "median.h"
@@ -68,6 +69,11 @@ static char *hexdmp(const char sig[8]){
 }
 #endif
 
+/**
+ * @brief imtype - check image type of given file
+ * @param f - opened image file structure
+ * @return image type or T_WRONG
+ */
 static InputType imtype(FILE *f){
     char signature[8];
     int x = fread(signature, 1, 7, f);
@@ -122,37 +128,22 @@ InputType chkinput(const char *name){
     return tp;
 }
 
-Image *u8toImage(uint8_t *data, int width, int height, int stride){
+/**
+ * @brief u8toImage - convert uint8_t data to Image structure (flipping upside down for FITS coordinates)
+ * @param data      - original image data
+ * @param width     - image width
+ * @param height    - image height
+ * @param stride    - image width with alignment
+ * @return Image structure (fully allocated, you can FREE(data) after it)
+ */
+Image *u8toImage(const uint8_t *data, int width, int height, int stride){
     FNAME();
-    Image *outp = MALLOC(Image, 1);
-    outp->width = width;
-    outp->height = height;
-    outp->dtype = FLOAT_IMG;
-/*
-    int histogram[256] = {0};
-    int wh = width*height;
-    #pragma omp parallel
-    {
-        int histogram_private[256] = {0};
-        #pragma omp for nowait
-        for(int i = 0; i < wh; ++i){
-            ++histogram_private[data[i]];
-        }
-        #pragma omp critical
-        {
-            for(int i=0; i<256; ++i) histogram[i] += histogram_private[i];
-        }
-    }
-    red("HISTO:\n");
-    for(int i = 0; i < 256; ++i) printf("%d:\t%d\n", i, histogram[i]);
-*/
-
-    outp->data = MALLOC(Imtype, width*height);
+    Image *outp = Image_new(width, height);
     // flip image updown for FITS coordinate system
     OMP_FOR()
     for(int y = 0; y < height; ++y){
         Imtype *Out = &outp->data[(height-1-y)*width];
-        uint8_t *In = &data[y*stride];
+        const uint8_t *In = &data[y*stride];
         for(int x = 0; x < width; ++x){
             *Out++ = (Imtype)(*In++);
         }
@@ -161,15 +152,21 @@ Image *u8toImage(uint8_t *data, int width, int height, int stride){
     return outp;
 }
 
-// load other image file
-static Image *im_load(const char *name){
+/**
+ * @brief im_load - load image file
+ * @param name - filename
+ * @return Image structure or NULL
+ */
+static inline Image *im_load(const char *name){
     int width, height, channels;
     uint8_t *img = stbi_load(name, &width, &height, &channels, 1);
     if(!img){
         WARNX("Error in loading the image %s\n", name);
         return NULL;
     }
-    return u8toImage(img, width, height, width);
+    Image *I = u8toImage(img, width, height, width);
+    free(img);
+    return I;
 }
 
 /**
@@ -199,6 +196,7 @@ Image *Image_read(const char *name){
  * @return data allocated here
  */
 Image *Image_new(int w, int h){
+    if(w < 1 || h < 1) return NULL;
     Image *outp = MALLOC(Image, 1);
     outp->width = w;
     outp->height = h;
@@ -213,24 +211,99 @@ Image *Image_new(int w, int h){
  */
 Image *Image_sim(const Image *i){
     if(!i) return NULL;
-    if((i->width * i->height) < 1) return NULL;
     Image *outp = Image_new(i->width, i->height);
-    outp->dtype = i->dtype;
     return outp;
 }
 
 /**
- * @brief linear - linear transform (mirror image upside down!)
+ * @brief get_histogram - calculate image histogram
+ * @param I - orig
+ * @return
+ */
+size_t *get_histogram(const Image *I){
+    if(!I || !I->data) return NULL;
+    size_t *histogram = MALLOC(size_t, 256);
+    int wh = I->width * I->height;
+#pragma omp parallel
+{
+    size_t histogram_private[256] = {0};
+    #pragma omp for nowait
+    for(int i = 0; i < wh; ++i){
+        ++histogram_private[I->data[i]];
+    }
+    #pragma omp critical
+    {
+        for(int i = 0; i < 256; ++i) histogram[i] += histogram_private[i];
+    }
+}
+    return histogram;
+}
+
+
+/**
+ * @brief calc_background - Simple background calculation by histogram
+ * @param img (i) - input image (here will be modified its top2proc field)
+ * @param bk (o)  - background value
+ * @return 0 if error
+ */
+int calc_background(const Image *img, Imtype *bk){
+    if(!img || !img->data || !bk) return FALSE;
+    if(img->maxval == img->minval){
+        WARNX("Zero or overilluminated image!");
+        return FALSE;
+    }
+    if(theconf.fixedbkg){
+        if(theconf.fixedbkg > img->minval){
+            WARNX("Image values too small");
+            return FALSE;
+        }
+        *bk = theconf.fixedbkg;
+        return TRUE;
+    }
+    size_t *histogram = get_histogram(img);
+
+    size_t modeidx = 0, modeval = 0;
+    for(int i = 0; i < 256; ++i)
+        if(modeval < histogram[i]){
+            modeval = histogram[i];
+            modeidx = i;
+        }
+    //DBG("Mode=%g @ idx%d (N=%d)", ((Imtype)modeidx / 255.)*ampl, modeidx, modeval);
+    ssize_t diff2[256] = {0};
+    for(int i = 2; i < 254; ++i) diff2[i] = (histogram[i+2]+histogram[i-2]-2*histogram[i])/4;
+    //green("HISTO:\n");
+    //for(int i = 0; i < 256; ++i) printf("%d:\t%d\t%d\n", i, histogram[i], diff2[i]);
+    FREE(histogram);
+    if(modeidx < 2) modeidx = 2;
+    if(modeidx > 253){
+        WARNX("Overilluminated image");
+        return FALSE; // very bad image: overilluminated
+    }
+    size_t borderidx = modeidx;
+    for(int i = modeidx; i < 254; ++i){ // search bend-point by second derivate
+        if(diff2[i] <= 0 && diff2[i+1] <= 0){
+            borderidx = i; break;
+        }
+    }
+    //DBG("borderidx=%d -> %d", borderidx, (borderidx+modeidx)/2);
+    //*bk = (borderidx + modeidx) / 2;
+    *bk = borderidx;
+    return TRUE;
+}
+
+
+/**
+ * @brief linear - linear transform for preparing file to save as JPEG or other type (mirror image upside down!)
  * @param I - input image
  * @param nchannels - 1 or 3 colour channels
  * @return allocated here image for jpeg/png storing
  */
 uint8_t *linear(const Image *I, int nchannels){ // only 1 and 3 channels supported!
-    if(nchannels != 1 && nchannels != 3) return NULL;
+    if(!I || !I->data || (nchannels != 1 && nchannels != 3)) return NULL;
     int width = I->width, height = I->height;
     size_t stride = width*nchannels, S = height*stride;
     uint8_t *outp = MALLOC(uint8_t, S);
-    Imtype min = I->minval, max = I->maxval, W = 255./(max - min);
+    float min = (float)I->minval, max = (float)I->maxval, W = 255./(max - min);
     //DBG("make linear transform %dx%d, %d channels", I->width, I->height, nchannels);
     if(nchannels == 3){
         OMP_FOR()
@@ -238,7 +311,7 @@ uint8_t *linear(const Image *I, int nchannels){ // only 1 and 3 channels support
             uint8_t *Out = &outp[(height-1-y)*stride];
             Imtype *In = &I->data[y*width];
             for(int x = 0; x < width; ++x){
-                Out[0] = Out[1] = Out[2] = (uint8_t)(W*((*In++) - min));
+                Out[0] = Out[1] = Out[2] = (uint8_t)(W*((float)(*In++) - min));
                 Out += 3;
             }
         }
@@ -248,7 +321,7 @@ uint8_t *linear(const Image *I, int nchannels){ // only 1 and 3 channels support
             uint8_t *Out = &outp[(height-1-y)*width];
             Imtype *In = &I->data[y*width];
             for(int x = 0; x < width; ++x){
-                *Out++ = (uint8_t)(W*((*In++) - min));
+                *Out++ = (uint8_t)(W*((float)(*In++) - min));
             }
         }
     }
@@ -263,24 +336,19 @@ uint8_t *linear(const Image *I, int nchannels){ // only 1 and 3 channels support
  * @return allocated here image for jpeg/png storing
  */
 uint8_t *equalize(const Image *I, int nchannels, double throwpart){
-    if(nchannels != 1 && nchannels != 3) return NULL;
+    if(!I || !I->data || (nchannels != 1 && nchannels != 3)) return NULL;
     int width = I->width, height = I->height;
     size_t stride = width*nchannels, S = height*stride;
-    uint8_t *lin = linear(I, 1);
-    if(!lin) return NULL;
+    size_t *orig_histo = get_histogram(I); // original hystogram (linear)
+    if(!orig_histo) return NULL;
     uint8_t *outp = MALLOC(uint8_t, S);
-    int orig_hysto[256] = {0}; // original hystogram (linear)
     uint8_t eq_levls[256] = {0};   // levels to convert: newpix = eq_levls[oldpix]
     int s = width*height;
-    for(int i = 0; i < s; ++i){
-        ++orig_hysto[lin[i]];
-    }
-
-    int Nblack = 0, bpart = (int)(throwpart * s);
+    int Nblack = 0, bpart = (int)(throwpart * (double)s);
     int startidx;
     // remove first part of black pixels
     for(startidx = 0; startidx < 256; ++startidx){
-        Nblack += orig_hysto[startidx];
+        Nblack += orig_histo[startidx];
         if(Nblack >= bpart) break;
     }
     ++startidx;
@@ -290,15 +358,9 @@ uint8_t *equalize(const Image *I, int nchannels, double throwpart){
         if(Nwhite >= wpart) break;
     }*/
     //DBG("Throw %d (real: %d black) pixels, startidx=%d", bpart, Nblack, startidx);
-/*
-    double part = (double)(s + 1) / 256., N = 0.;
-    for(int i = 0; i < 256; ++i){
-        N += orig_hysto[i];
-        eq_levls[i] = (uint8_t)(N/part);
-    }*/
     double part = (double)(s + 1. - Nblack) / 256., N = 0.;
     for(int i = startidx; i < 256; ++i){
-        N += orig_hysto[i];
+        N += orig_histo[i];
         eq_levls[i] = (uint8_t)(N/part);
     }
     //for(int i = stopidx; i < 256; ++i) eq_levls[i] = 255;
@@ -309,8 +371,8 @@ uint8_t *equalize(const Image *I, int nchannels, double throwpart){
     if(nchannels == 3){
         OMP_FOR()
         for(int y = 0; y < height; ++y){
-            uint8_t *Out = &outp[y*stride];
-            uint8_t *In = &lin[y*width];
+            uint8_t *Out = &outp[(height-1-y)*stride];
+            Imtype *In = &I->data[y*width];
             for(int x = 0; x < width; ++x){
                 Out[0] = Out[1] = Out[2] = eq_levls[*In++];
                 Out += 3;
@@ -319,14 +381,14 @@ uint8_t *equalize(const Image *I, int nchannels, double throwpart){
     }else{
         OMP_FOR()
         for(int y = 0; y < height; ++y){
-            uint8_t *Out = &outp[y*width];
-            uint8_t *In = &lin[y*width];
+            uint8_t *Out = &outp[(height-1-y)*width];
+            Imtype *In = &I->data[y*width];
             for(int x = 0; x < width; ++x){
                 *Out++ = eq_levls[*In++];
             }
         }
     }
-    FREE(lin);
+    FREE(orig_histo);
     return outp;
 }
 
@@ -344,6 +406,7 @@ int Image_write_jpg(const Image *I, const char *name, int eq){
         outp = equalize(I, 1, theconf.throwpart);
     else
         outp = linear(I, 1);
+    if(!outp) return 0;
     //DBG("Try to write %s", name);
     char *tmpnm = MALLOC(char, strlen(name) + 5);
     sprintf(tmpnm, "%s-tmp", name);
@@ -372,8 +435,9 @@ void Image_minmax(Image *I){
         int min_p = min, max_p = min;
         #pragma omp for nowait
         for(int i = 0; i < wh; ++i){
-            if(I->data[i] < min_p) min_p = I->data[i];
-            else if(I->data[i] > max_p) max_p = I->data[i];
+            Imtype pixval = I->data[i];
+            if(pixval < min_p) min_p = pixval;
+            else if(pixval > max_p) max_p = pixval;
         }
         #pragma omp critical
         {
@@ -383,27 +447,26 @@ void Image_minmax(Image *I){
     }
     I->maxval = max;
     I->minval = min;
-    DBG("Image_minmax(): Min=%g, Max=%g, time: %gms", min, max, (dtime()-t0)*1e3);
+    DBG("Image_minmax(): Min=%d, Max=%d, time: %gms", min, max, (dtime()-t0)*1e3);
 }
 
 /*
  * =================== CONVERT IMAGE TYPES ===================>
  */
 
-// convert binarized image into floating
 /**
  * @brief bin2Im - convert binarized image into floating
  * @param image - binarized image
  * @param W, H  - its size (in pixels!)
  * @return Image structure
  */
-Image *bin2Im(uint8_t *image, int W, int H){
+Image *bin2Im(const uint8_t *image, int W, int H){
     Image *ret = Image_new(W, H);
     int stride = (W + 7) / 8, s1 = (stride*8 == W) ? stride : stride - 1;
     OMP_FOR()
     for(int y = 0; y < H; y++){
         Imtype *optr = &ret->data[y*W];
-        uint8_t *iptr = &image[y*stride];
+        const uint8_t *iptr = &image[y*stride];
         for(int x = 0; x < s1; x++){
             register uint8_t inp = *iptr++;
             for(int i = 0; i < 8; ++i){
@@ -412,20 +475,21 @@ Image *bin2Im(uint8_t *image, int W, int H){
             }
         }
         int rest = W - s1*8;
-        register uint8_t inp = *iptr;
-        for(int i = 0; i < rest; ++i){
-            *optr++ = (inp & 0x80) ? 1. : 0;
-            inp <<= 1;
+        if(rest){
+            register uint8_t inp = *iptr;
+            for(int i = 0; i < rest; ++i){
+                *optr++ = (inp & 0x80) ? 1. : 0;
+                inp <<= 1;
+            }
         }
     }
-    ret->dtype = BYTE_IMG;
     ret->minval = 0;
     ret->maxval = 1;
     return ret;
 }
 
 /**
- * Convert floatpoint image into pseudo-packed (1 char == 8 pixels), all values > 0 will be 1, else - 0
+ * Convert floatpoint image into pseudo-packed (1 char == 8 pixels), all values > bk will be 1, else - 0
  * @param im (i)     - image to convert
  * @param stride (o) - new width of image
  * @param bk         - background level (all values < bk will be 0, other will be 1)
@@ -438,46 +502,47 @@ uint8_t *Im2bin(const Image *im, Imtype bk){
     int y, W0 = (W + 7) / 8, s1 = (W/8 == W0) ? W0 : W0 - 1;
     uint8_t *ret = MALLOC(uint8_t, W0 * H);
     OMP_FOR()
-    for(y = 0; y < H; y++){
+    for(y = 0; y < H; ++y){
         Imtype *iptr = &im->data[y*W];
         uint8_t *optr = &ret[y*W0];
-        register uint8_t o;
         for(int x = 0; x < s1; ++x){
-            o = 0;
+            register uint8_t o = 0;
             for(int i = 0; i < 8; ++i){
                 o <<= 1;
                 if(*iptr++ > bk) o |= 1;
             }
             *optr++ = o;
         }
-        int rest = 7 - (W - s1*8);
-        if(rest < 7){
-            o = 0;
-            for(int x = 7; x > rest; --x){
-                if(*iptr++ > 0.) o |= 1<<x;
+        int rest = W - s1*8;
+        if(rest){
+            register uint8_t o = 0;
+            for(int x = 0; x < rest; ++x){
+                o <<= 1;
+                if(*iptr++ > bk) o |= 1;
             }
-            *optr = o;
-            //*optr = o | 1<<rest; // mark outern right edge (for good CC labeling)
+            *optr = o << (8 - rest);
         }
     }
     return ret;
 }
 
-// convert size_t labels into floating
-Image *ST2Im(size_t *image, int W, int H){
+#if 0
+UNUSED function! Need to be refactored
+// convert size_t labels into Image
+Image *ST2Im(const size_t *image, int W, int H){
     Image *ret = Image_new(W, H);
     OMP_FOR()
     for(int y = 0; y < H; ++y){
         Imtype *optr = &ret->data[y*W];
-        size_t *iptr = &image[y*W];
+        const size_t *iptr = &image[y*W];
         for(int x = 0; x < W; ++x){
             *optr++ = (Imtype)*iptr++;
         }
     }
-    ret->dtype = FLOAT_IMG;
     Image_minmax(ret);
     return ret;
 }
+#endif
 
 /**
  * Convert "packed" image into size_t array for conncomp procedure
@@ -485,13 +550,13 @@ Image *ST2Im(size_t *image, int W, int H){
  * @param W, H      - size of image in pixels
  * @return allocated memory area with copy of an image
  */
-size_t *bin2ST(uint8_t *image, int W, int H){
+size_t *bin2ST(const uint8_t *image, int W, int H){
     size_t *ret = MALLOC(size_t, W * H);
     int W0 = (W + 7) / 8, s1 = W0 - 1;
     OMP_FOR()
     for(int y = 0; y < H; y++){
         size_t *optr = &ret[y*W];
-        uint8_t *iptr = &image[y*W0];
+        const uint8_t *iptr = &image[y*W0];
         for(int x = 0; x < s1; ++x){
             register uint8_t inp = *iptr++;
             for(int i = 0; i < 8; ++i){
@@ -500,10 +565,12 @@ size_t *bin2ST(uint8_t *image, int W, int H){
             }
         }
         int rest = W - s1*8;
-        register uint8_t inp = *iptr;
-        for(int i = 0; i < rest; ++i){
-            *optr++ = (inp & 0x80) ? 1 : 0;
-            inp <<= 1;
+        if(rest){
+            register uint8_t inp = *iptr;
+            for(int i = 0; i < rest; ++i){
+                *optr++ = (inp & 0x80) ? 1 : 0;
+                inp <<= 1;
+            }
         }
     }
     return ret;

@@ -60,26 +60,12 @@ uint8_t *filter4(uint8_t *image, int W, int H);
 uint8_t *filter8(uint8_t *image, int W, int H);
 
 size_t *cclabel4(uint8_t *Img, int W, int H, ConnComps **CC);
-size_t *cclabel8(uint8_t *Img, int W, int H, size_t *Nobj);
 
 #if 0
+size_t *cclabel8(uint8_t *Img, int W, int H, size_t *Nobj);
 // logical operations
 uint8_t *imand(uint8_t *im1, uint8_t *im2, int W, int H);
 uint8_t *substim(uint8_t *im1, uint8_t *im2, int W, int H);
-/*
-// conncomp
-// this is a box structure containing one object; data is aligned by original image bytes!
-typedef struct {
-    uint8_t *data; // pattern data in "packed" format
-    int x,   // x coordinate of LU-pixel of box in "unpacked" image (by pixels)
-    y,       // y -//-
-    x_0;     // x coordinate in "packed" image (morph operations should work with it)
-    size_t N;// number of component, starting from 1
-} CCbox;
-*/
-
-IMAGE *cclabel4(IMAGE *I, double threshold, size_t *Nobj);
-IMAGE *cclabel8(IMAGE *I, double threshold, size_t *Nobj);
 #endif
 
 #endif // BINMORPH_H__

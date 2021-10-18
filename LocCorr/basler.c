@@ -16,10 +16,10 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#include <usefull_macros.h>
 #include <pylonc/PylonC.h>
 
 #include "basler.h"
+#include "debug.h"
 #include "imagefile.h"
 
 static PYLON_DEVICE_HANDLE hDev;
@@ -74,7 +74,6 @@ static void disconnect(){
     isopened = FALSE;
 }
 
-// get node & check it for read/write
 /**
  * @brief chkNode - get node & check it for read/write
  * @param phNode (io) - pointer to node
@@ -144,6 +143,7 @@ static int setBoolean(char *featureName, _Bool val){
     NODE_HANDLE hNode;
     if(!chkNode(&hNode, featureName, BooleanNode, TRUE)) return FALSE;
     PYLONFN(GenApiBooleanSetValue, hNode, val);
+    return TRUE;
 }
 static int setInt(char *featureName, int64_t val){
     if(!isopened || !featureName) return FALSE;
@@ -222,6 +222,7 @@ static Image *capture(){
     float_values f;
     if(!getFloat("DeviceTemperature", &f)) WARNX("Can't get temperature");
     else{
+        LOGDBG("Basler temperature: %.1f", f.val);
         DBG("Temperature: %.1f", f.val);
         if(f.val > 80.){
             WARNX("Device too hot");
@@ -230,7 +231,7 @@ static Image *capture(){
                 toohot = TRUE;
             }
         }else if(toohot && f.val < 75.){
-            LOGMSG("Device temperature is normal");
+            LOGDBG("Device temperature is normal");
             toohot = FALSE;
         }
     }

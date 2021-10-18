@@ -19,10 +19,10 @@
 #include <limits.h>
 #include <stdio.h>
 #include <string.h>
-#include <usefull_macros.h>
 
 #include "cmdlnopts.h"
 #include "config.h"
+#include "debug.h"
 
 static char *conffile = NULL; // configuration file name
 
@@ -192,12 +192,12 @@ static char *read_key(FILE *file, char value[128]){
     char *line = NULL;
     size_t n = 0;
     int got = getline(&line, &n, file);
+    if(!line) return NULL;
     if(got < 0){
-        FREE(line);
+        free(line);
         return NULL;
     }
     char *kv = get_keyval(line, value);
-    FREE(line);
     return kv;
 }
 
@@ -267,7 +267,7 @@ confparam *chk_keyval(const char *key, const char *val, key_value *result){
  */
 int chkconfig(const char *confname){
     DBG("Config name: %s", confname);
-    FREE(conffile);
+    if(conffile){ free(conffile); conffile = NULL; }
     conffile = strdup(confname);
     FILE *f = fopen(confname, "r");
     int ret = TRUE;
@@ -283,7 +283,8 @@ int chkconfig(const char *confname){
     }
     while((key = read_key(f, val))){
         if(*key == '#'){
-            FREE(key);
+            free(key);
+            key = NULL;
             continue; // comment
         }
         //DBG("key: %s", key);
@@ -291,7 +292,8 @@ int chkconfig(const char *confname){
         par = chk_keyval(key, val, &kv);
         if(!par){
             WARNX("Parameter '%s' is wrong or out of range", key);
-            FREE(key);
+            free(key);
+            key = NULL;
             continue;
         }
         switch(par->type){
@@ -303,7 +305,8 @@ int chkconfig(const char *confname){
             break;
         }
         ++par->got;
-        FREE(key);
+        free(key);
+        key = NULL;
     }
     fclose(f);
     int found = 0;
@@ -321,34 +324,6 @@ int chkconfig(const char *confname){
         }
         ++found; ++par;
     }
-#if 0
-        int Nchecked = 0;
-        if(theconf.maxUsteps >= MINSTEPS && theconf.maxUsteps <= MAXSTEPS) ++Nchecked;
-        if(theconf.maxVsteps >= MINSTEPS && theconf.maxVsteps <= MAXSTEPS) ++Nchecked;
-        if(theconf.cosXU >= -1. && theconf.cosXU <= 1.) ++Nchecked;
-        if(theconf.sinXU >= -1. && theconf.sinXU <= 1.) ++Nchecked;
-        if(theconf.cosXV >= -1. && theconf.cosXV <= 1.) ++Nchecked;
-        if(theconf.sinXV >= -1. && theconf.sinXV <= 1.) ++Nchecked;
-        if(theconf.KU >= COEFMIN && theconf.KU <= COEFMAX) ++Nchecked;
-        if(theconf.KV >= COEFMIN && theconf.KV <= COEFMAX) ++Nchecked;
-        if(theconf.maxarea <= MAXAREA && theconf.maxarea >= MINAREA) ++Nchecked;
-        if(theconf.minarea <= MAXAREA && theconf.minarea >= MINAREA) ++Nchecked;
-        if(theconf.Nerosions > 0 && theconf.Nerosions <= MAX_NEROS) ++Nchecked;
-        if(theconf.Ndilations > 0 && theconf.Ndilations <= MAX_NDILAT) ++Nchecked;
-        if(theconf.xtarget > 1.) ++Nchecked;
-        if(theconf.ytarget > 1.) ++Nchecked;
-        if(theconf.throwpart > -DBL_EPSILON && theconf.throwpart < MAX_THROWPART+DBL_EPSILON) ++Nchecked;
-        if(theconf.xoff > 0 && theconf.xoff < MAX_OFFSET) ++Nchecked;
-        if(theconf.yoff > 0 && theconf.yoff < MAX_OFFSET) ++Nchecked;
-        if(theconf.width > 0 && theconf.width < MAX_OFFSET) ++Nchecked;
-        if(theconf.height > 0 && theconf.height < MAX_OFFSET) ++Nchecked;
-        if(theconf.minexp > 0. && theconf.minexp < EXPOS_MAX) ++Nchecked;
-        if(theconf.maxexp > theconf.minexp) ++Nchecked;
-        if(theconf.equalize > -1) ++Nchecked;
-        if(theconf.intensthres > DBL_EPSILON && theconf.intensthres < 1.) ++Nchecked;
-        if(theconf.naverage > 1 && theconf.naverage <= NAVER_MAX) ++Nchecked;
-        if(theconf.stpserverport > 0 && theconf.stpserverport < 65536) ++Nchecked;
-#endif
     DBG("chkconfig(): found %d", found);
     return ret;
 }

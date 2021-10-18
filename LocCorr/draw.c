@@ -16,11 +16,11 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-// simplest interface to draw lines & ellipsis
+// simplest interface to draw lines & ellipses
+#include "debug.h"
 #include "draw.h"
 #include "fits.h"
 
-#include <usefull_macros.h>
 
 // base colors:
 const uint8_t
@@ -46,13 +46,35 @@ void Pattern_free(Pattern **p){
 Pattern *Pattern_cross(int h, int w){
     int s = h*w, hmid = h/2, wmid = w/2;
     uint8_t *data = MALLOC(uint8_t, s);
+    Pattern *p = MALLOC(Pattern, 1);
+    p->data = data;
+    p->h = h; p->w = w;
     uint8_t *ptr = &data[wmid];
     for(int y = 0; y < h; ++y, ptr += w) *ptr = 255;
     ptr = &data[hmid*w];
     for(int x = 0; x < w; ++x, ++ptr) *ptr = 255;
+    return p;
+}
+
+// complicated cross
+Pattern *Pattern_xcross(int h, int w){
+    int s = h*w, hmid = h/2, wmid = w/2;
+    uint8_t *data = MALLOC(uint8_t, s);
     Pattern *p = MALLOC(Pattern, 1);
     p->data = data;
     p->h = h; p->w = w;
+    data[hmid*w + wmid] = 255; // point @ center
+    if(h < 7 || w < 7) return p;
+    int idxy1 = (hmid-3)*w, idxy2 = (hmid+3)*w;
+    int idxx1 = wmid-3, idxx2 = wmid+3;
+    for(int i = 0; i < wmid - 3; ++i){
+        data[idxy1+i] = data[idxy1+w-1-i] = 255;
+        data[idxy2+i] = data[idxy2+w-1-i] = 255;
+    }
+    for(int i = 0; i < hmid - 3; ++i){
+        data[idxx1 + i*w] = data[idxx1 + (h-1-i)*w] = 255;
+        data[idxx2 + i*w] = data[idxx2 + (h-1-i)*w] = 255;
+    }
     return p;
 }
 
@@ -63,7 +85,8 @@ Pattern *Pattern_cross(int h, int w){
  * @param xc, yc      - coordinates of pattern center @ image
  * @param colr        - color to draw pattern (when opaque == 255)
  */
-void Pattern_draw3(Img3 *img, Pattern *p, int xc, int yc, const uint8_t colr[]){
+void Pattern_draw3(Img3 *img, const Pattern *p, int xc, int yc, const uint8_t colr[]){
+    if(!img || !p) return;
     int xul = xc - p->w/2, yul = yc - p->h/2;
     int xdr = xul+p->w-1, ydr = yul+p->h-1;
     int R = img->w, D = img->h; // right and down border coordinates + 1
@@ -96,7 +119,7 @@ void Pattern_draw3(Img3 *img, Pattern *p, int xc, int yc, const uint8_t colr[]){
         uint8_t *in = &p->data[(iylow+y-oylow)*p->w + ixlow]; // opaque component
         uint8_t *out = &img->data[(y*img->w + oxlow)*3]; // 3-colours
         for(int x = oxlow; x < oxhigh; ++x, ++in, out += 3){
-            float opaque = *in/255.;
+            float opaque = ((float)*in)/255.;
             for(int c = 0; c < 3; ++c){
                 out[c] = (uint8_t)(colr[c] * opaque + out[c]*(1.-opaque));
             }

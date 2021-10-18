@@ -24,8 +24,9 @@
 #include <string.h> // memcpy
 #include <math.h>
 #include <sys/time.h>
-#include <usefull_macros.h>
+
 #include "binmorph.h"
+#include "debug.h"
 #include "imagefile.h"
 
 // global arrays for erosion/dilation masks
@@ -67,7 +68,7 @@ uint8_t *filter4(uint8_t *image, int W, int H){
     uint8_t *ret = MALLOC(uint8_t, W*H);
     int W0 = (W + 7) / 8; // width in bytes
     int w = W0-1, h = H-1;
-    {int y = 0;
+    {
     // top of image, y = 0
     #define IM_UP
     #include "fc_filter.h"
@@ -79,7 +80,6 @@ uint8_t *filter4(uint8_t *image, int W, int H){
     }
     {
     // image bottom, y = h
-    int y = h;
     #define IM_DOWN
     #include "fc_filter.h"
     #undef IM_DOWN
@@ -99,7 +99,7 @@ uint8_t *filter8(uint8_t *image, int W, int H){
     uint8_t *ret = MALLOC(uint8_t, W*H);
     int W0 = (W + 7) / 8; // width in bytes
     int w = W0-1, h = H-1;
-    {int y = 0;
+    {
     #define IM_UP
     #include "ec_filter.h"
     #undef IM_UP
@@ -108,7 +108,6 @@ uint8_t *filter8(uint8_t *image, int W, int H){
     #include "ec_filter.h"
     }
     {
-    int y = h;
     #define IM_DOWN
     #include "ec_filter.h"
     #undef IM_DOWN
@@ -130,7 +129,7 @@ uint8_t *dilation(uint8_t *image, int W, int H){
     uint8_t lastmask = ~(1<<rest);
     if(!DIL) morph_init();
     uint8_t *ret = MALLOC(uint8_t, W0*H);
-    {int y = 0;
+    {
     // top of image, y = 0
     #define IM_UP
     #include "dilation.h"
@@ -140,7 +139,7 @@ uint8_t *dilation(uint8_t *image, int W, int H){
     // mid of image, y = 1..h-1
     #include "dilation.h"
     }
-    {int y = h;
+    {
     // image bottom, y = h
     #define IM_DOWN
     #include "dilation.h"
@@ -329,6 +328,23 @@ uint8_t *substim(uint8_t *im1, uint8_t *im2, int W, int H){
 #define TEST(...)
 #endif
 
+// check table and rename all "oldval" into "newval"
+static inline void remark(size_t newval, size_t oldval, size_t *assoc){
+    TEST("\tnew = %zd, old=%zd; ", newval, oldval);
+    // find the least values
+    do{newval = assoc[newval];}while(assoc[newval] != newval);
+    do{oldval = assoc[oldval];}while(assoc[oldval] != oldval);
+    TEST("\trealnew = %zd, realold=%zd ", newval, oldval);
+    // now change larger value to smaller
+    if(newval > oldval){
+        assoc[newval] = oldval;
+        TEST("change %zd to %zd\n", newval, oldval);
+    }else{
+        assoc[oldval] = newval;
+        TEST("change %zd to %zd\n", oldval, newval);
+    }
+}
+
 /**
  * label 4-connected components on image
  * (slow algorythm, but easy to parallel)
@@ -340,22 +356,6 @@ uint8_t *substim(uint8_t *im1, uint8_t *im2, int W, int H){
  */
 size_t *cclabel4(uint8_t *Img, int W, int H, ConnComps **CC){
     size_t *assoc;
-    // check table and rename all "oldval" into "newval"
-    inline void remark(size_t newval, size_t oldval){
-        TEST("\tnew = %zd, old=%zd; ", newval, oldval);
-        // find the least values
-        do{newval = assoc[newval];}while(assoc[newval] != newval);
-        do{oldval = assoc[oldval];}while(assoc[oldval] != oldval);
-        TEST("\trealnew = %zd, realold=%zd ", newval, oldval);
-        // now change larger value to smaller
-        if(newval > oldval){
-            assoc[newval] = oldval;
-            TEST("change %zd to %zd\n", newval, oldval);
-        }else{
-            assoc[oldval] = newval;
-            TEST("change %zd to %zd\n", oldval, newval);
-        }
-    }
     if(W < MINWIDTH || H < MINHEIGHT) return NULL;
     uint8_t *f = filter4(Img, W, H); // remove all non 4-connected pixels
     //DBG("convert to size_t");
@@ -375,7 +375,7 @@ size_t *cclabel4(uint8_t *Img, int W, int H, ConnComps **CC){
             if(found){ // there's a pixel to the left
                 if(U && U != curmark){ // meet old mark -> remark one of them in assoc[]
                     TEST("(%d, %d): remark %zd --> %zd\n", x, y, U, curmark);
-                    remark(U, curmark);
+                    remark(U, curmark, assoc);
                     curmark = U; // change curmark to upper mark (to reduce further checks)
                 }
             }else{ // new mark -> change curmark
@@ -428,23 +428,6 @@ size_t *cclabel4(uint8_t *Img, int W, int H, ConnComps **CC){
         boxes[i].xmin = W;
         boxes[i].ymin = H;
     }
-    //nonOMP: 36.5ms
-/* linear:
-    for(int y = 0; y < H; ++y){
-        size_t *lptr = &labels[y*W];
-        for(int x = 0; x < W; ++x, ++lptr){
-            if(!*lptr) continue;
-            register size_t mark = indexes[*lptr];
-            *lptr = mark;
-            Box *b = &boxes[mark];
-            ++b->area;
-            if(b->xmax < x) b->xmax = x;
-            if(b->xmin > x) b->xmin = x;
-            if(b->ymax < y) b->ymax = y;
-            if(b->ymin > y) b->ymin = y;
-        }
-    }*/
-// parallel:
 #pragma omp parallel shared(boxes)
     {
         Box *l_boxes = MALLOC(Box, cidx);
@@ -507,60 +490,6 @@ size_t *cclabel8(size_t *labels, int W, int H, size_t *Nobj){
 }
 #endif
 
-
-#if 0
-/**
- * Make connection-component labeling
- * output image vould have uint16_t data
- * @param img (i)       - input image
- * @param threshold (i) - threshold level in value of dynamic range (0,1)
- * @param Nobj (o)      - amount of object found (or NULL if not needed)
- */
-IMAGE *cclabel4(IMAGE *img, double threshold, size_t *Nobj){
-    /*if(N != 4 || N != 8){
-        ERRX(_("Can work only for 4- or 8-connected components"));
-    }*/
-    double thrval;
-    uint16_t *binary = binarize(img, threshold, &thrval);
-    if(!binary) return NULL;
-    int W_0;
-    uint8_t *Ima = u16tochar(binary, img->width, img->height, &W_0);
-    FREE(binary);
-    size_t N;
-    uint16_t *dat = _cclabel4(Ima, img->width, img->height, W_0, &N);
-    if(Nobj) *Nobj = N;
-    FREE(Ima);
-    IMAGE *ret = buildFITSfromdat(img->height, img->width, SHORT_IMG, (uint8_t*)dat);
-    FREE(dat);
-    char buf[80];
-    snprintf(buf, 80, "COMMENT found %zd 4-connected components, threshold value %g",
-        N, (double)thrval);
-    list_add_record(&ret->keylist, buf);
-    snprintf(buf, 80, "COMMENT    (%g%% fromdata range%s)", fabs(threshold)*100.,
-        (threshold < 0.) ? ", inverted" : "");
-    list_add_record(&ret->keylist, buf);
-    return ret;
-}
-
-IMAGE *cclabel8(IMAGE *img, double threshold, size_t *Nobj){
-    double thrval;
-    uint16_t *binary = binarize(img, threshold, &thrval);
-    if(!binary) return NULL;
-    size_t N;
-    _cclabel8(binary, img->width, img->height, &N);
-    if(Nobj) *Nobj = N;
-    IMAGE *ret = buildFITSfromdat(img->height, img->width, SHORT_IMG, (uint8_t*)binary);
-    FREE(binary);
-    char buf[80];
-    snprintf(buf, 80, "COMMENT found %zd 8-connected components, threshold value %g",
-        N, (double)thrval);
-    list_add_record(&ret->keylist, buf);
-    snprintf(buf, 80, "COMMENT    (%g%% fromdata range%s)", fabs(threshold)*100.,
-        (threshold < 0.) ? ", inverted" : "");
-    list_add_record(&ret->keylist, buf);
-    return ret;
-}
-#endif
 /*
  * <=================== CONNECTED COMPONENTS LABELING ===================
  */

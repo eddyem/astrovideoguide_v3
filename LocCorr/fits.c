@@ -18,9 +18,9 @@
 #include <stdint.h>
 #include <string.h>
 #include <stdio.h>
-#include <usefull_macros.h>
 #include <math.h>
 
+#include "debug.h"
 #include "fits.h"
 
 static int fitsstatus = 0;
@@ -56,12 +56,40 @@ void Image_free(Image **img){
     FREE(*img);
 }
 
+// I->data should be allocated!!!
+static inline void convflt2ima(float *f, Image *I){
+    if(!I || !I->data || !f) return;
+    float min = *f, max = min;
+    int wh = I->height * I->width;
+    #pragma omp parallel shared(min, max)
+    {
+        float min_p = min, max_p = min;
+        #pragma omp for nowait
+        for(int i = 0; i < wh; ++i){
+            if(f[i] < min_p) min_p = f[i];
+            else if(f[i] > max_p) max_p = f[i];
+        }
+        #pragma omp critical
+        {
+            if(min > min_p) min = min_p;
+            if(max < max_p) max = max_p;
+        }
+    }
+    float W = 255./(max - min);
+    #pragma omp for
+    for(int i = 0; i < wh; ++i){
+         I->data[i] = (Imtype)(W*(f[i] - min));
+    }
+    I->maxval = 255;
+    I->minval = 0;
+}
+
 bool FITS_read(const char *filename, Image **fits){
     FNAME();
     bool ret = TRUE;
     fitsfile *fp;
     int i, j, hdunum, hdutype, nkeys, keypos;
-    int naxis;
+    int naxis, dtype;
     long naxes[2];
     char card[FLEN_CARD];
     Image *img = MALLOC(Image, 1);
@@ -75,7 +103,7 @@ bool FITS_read(const char *filename, Image **fits){
         goto returning;
     }
     // get image dimensions
-    TRYFITS(fits_get_img_param, fp, 2, &img->dtype, &naxis, naxes);
+    TRYFITS(fits_get_img_param, fp, 2, &dtype, &naxis, naxes);
     DBG("Image have %d axis", naxis);
     if(naxis > 2){
         WARNX(_("Images with > 2 dimensions are not supported"));
@@ -84,7 +112,7 @@ bool FITS_read(const char *filename, Image **fits){
     }
     img->width = naxes[0];
     img->height = naxes[1];
-    DBG("got image %ldx%ld pix, bitpix=%d", naxes[0], naxes[1], img->dtype);
+    DBG("got image %ldx%ld pix, bitpix=%d", naxes[0], naxes[1], dtype);
     // loop through all HDUs
     for(i = 1; !(fits_movabs_hdu(fp, i, &hdutype, &fitsstatus)); ++i){
         TRYFITS(fits_get_hdrpos, fp, &nkeys, &keypos);
@@ -114,25 +142,19 @@ bool FITS_read(const char *filename, Image **fits){
     }
     size_t sz = naxes[0] * naxes[1];
     img->data = MALLOC(Imtype, sz);
+    float *targ = MALLOC(float, sz);
     int stat = 0;
-    TRYFITS(fits_read_img, fp, FITSDATATYPE, 1, sz, NULL, img->data, &stat);
-    Imtype *d = img->data, min = *d, max = *d;
-    for(size_t x = 0; x < sz; ++x){
-        if(d[x] > max) max = d[x];
-        else if(d[x] < min) min = d[x];
-    }
-    img->maxval = max;
-    img->minval = min;
-    DBG("FITS stat: min=%g, max=%g", min, max);
+    TRYFITS(fits_read_img, fp, TFLOAT, 1, sz, NULL, targ, &stat);
     if(stat) WARNX(_("Found %d pixels with undefined value"), stat);
+    convflt2ima(targ, img);
+    FREE(targ);
     DBG("ready");
 
 returning:
     FITSFUN(fits_close_file, fp);
-    if(!ret){
+    if(!ret || !fits){
         Image_free(&img);
-    }
-    if(fits) *fits = img;
+    }else *fits = img;
     return ret;
 }
 
@@ -143,63 +165,8 @@ bool FITS_write(const char *filename, const Image *fits){
     fitsfile *fp;
 
     TRYFITS(fits_create_file, &fp, filename);
-    TRYFITS(fits_create_img, fp, fits->dtype, 2, naxes);
-    Imtype *outp = fits->data;
-    bool need2free = FALSE;
-    if(fits->dtype > 0){ // convert floating data into integer
-        Imtype maxval;
-        Imtype minval;
-        switch(fits->dtype){
-            case SBYTE_IMG: // there's a bug in cfitsio, it can't save float->sbyte
-                maxval = (Imtype)INT8_MAX;
-                minval = (Imtype)INT8_MIN;
-            break;
-            case SHORT_IMG:
-                maxval = (Imtype)INT16_MAX;
-                minval = (Imtype)INT16_MIN;
-            break;
-            case USHORT_IMG:
-                maxval = (Imtype)UINT16_MAX;
-                minval = (Imtype)0;
-            break;
-            case LONG_IMG:
-                maxval = (Imtype)INT32_MAX;
-                minval = (Imtype)INT32_MIN;
-            break;
-            case ULONG_IMG:
-                maxval = (Imtype)UINT32_MAX;
-                minval = (Imtype)0;
-            break;
-            case ULONGLONG_IMG:
-                maxval = (Imtype)UINT64_MAX;
-                minval = (Imtype)0;
-            break;
-            case LONGLONG_IMG:
-                maxval = (Imtype)INT64_MAX;
-                minval = (Imtype)INT64_MIN;
-            break;
-            case BYTE_IMG:
-            default:  // byte
-                maxval = (Imtype)UINT8_MAX;
-                minval = (Imtype)0;
-        }
-        DBG("maxval = %g, minval = %g", maxval, minval);
-        int w = fits->width, h = fits->height;
-        Imtype min = fits->minval, max = fits->maxval, W = (maxval - minval)/(max - min);
-        outp = MALLOC(Imtype, w*h);
-        OMP_FOR()
-        for(int y = 0; y < h; ++y){
-            Imtype *o = &outp[y*w], *i = &fits->data[y*w];
-            for(int x = 0; x < w; ++x, ++o, ++i){
-                *o = W*((*i) - min) + minval;
-                //if(*o < minval || *o > maxval) red("o: %g\n", *o);
-                //if(*o < minval) *o = minval;
-                //else if(*o > maxval) *o = maxval;
-            }
-        }
-        need2free = TRUE;
-        DBG("converted");
-    }
+    TRYFITS(fits_create_img, fp, SHORT_IMG, 2, naxes);
+
     if(keys){ // there's keys
         size_t i;
         char **records = fits->keylist;
@@ -216,8 +183,7 @@ bool FITS_write(const char *filename, const Image *fits){
     }
     FITSFUN(fits_write_record, fp, "COMMENT  modified by loccorr");
     fitsstatus = 0;
-    fits_write_img(fp, FITSDATATYPE, 1, sz, outp, &fitsstatus);
-    if(need2free) FREE(outp);
+    fits_write_img(fp, TBYTE, 1, sz, fits->data, &fitsstatus);
     if(fitsstatus){
         fits_report_error(stderr, fitsstatus);
         return FALSE;

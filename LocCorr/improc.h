@@ -27,8 +27,6 @@
 #define XY_TOLERANCE                (5.)
 
 #define PUSIROBO_POSTPROC   "pusirobo"
-// how many frames will be averaged to count image deviation
-#define MAX_AVERAGING_ARRAY_SIZE        (25)
 
 extern volatile atomic_bool stopwork;
 extern volatile atomic_ullong ImNumber;
@@ -54,5 +52,6 @@ void openXYlog(const char *name);
 void closeXYlog();
 void setpostprocess(const char *name);
 double getFramesPerS();
+void getcenter(float *x, float *y);
 
 #endif // IMPROC_H__

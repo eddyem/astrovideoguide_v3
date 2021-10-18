@@ -27,6 +27,5 @@
 Imtype calc_median(Imtype *idata, int n);
 Image *get_median(const Image *img, int seed);
 int  get_stat(const Image *in, int seed, Image **mean, Image **std);
-int calc_background(Image *img, Imtype *bk);
 
 #endif // __MEDIAN_H__

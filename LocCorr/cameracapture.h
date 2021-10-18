@@ -15,11 +15,12 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
-
 #pragma once
 #ifndef CAMERACAPTURE_H__
 #define CAMERACAPTURE_H__
-#include "fits.h" // Image*
+
+#include "imagefile.h" // Image
+
 
 // format of single frame
 typedef struct{

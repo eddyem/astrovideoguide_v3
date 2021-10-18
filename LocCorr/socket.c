@@ -29,10 +29,10 @@
 #include <sys/ioctl.h>
 #include <sys/syscall.h> // syscall
 #include <unistd.h>     // daemon
-#include <usefull_macros.h>
 
 #include "cmdlnopts.h"
 #include "config.h"
+#include "debug.h"
 #include "improc.h"
 #include "socket.h"
 
@@ -140,7 +140,7 @@ static char *moveU(const char *val, char *buf, int buflen){
     return retFAIL(buf, buflen);
 }
 static char *moveV(const char *val, char *buf, int buflen){
-    if(theSteppers && theSteppers->moveByV) return theSteppers->moveByU(val, buf, buflen);
+    if(theSteppers && theSteppers->moveByV) return theSteppers->moveByV(val, buf, buflen);
     return retFAIL(buf, buflen);
 }
 static char *relaycmd(const char *val, char *buf, int buflen){
@@ -171,7 +171,7 @@ static char *processCommand(const char msg[BUFLEN], char *ans, int anslen){
         DBG("got KEY '%s' with value '%s'", kv, value);
         key_value result;
         par = chk_keyval(kv, value, &result);
-        FREE(kv);
+        free(kv); kv = NULL;
         if(par){
             switch(par->type){
                 case PAR_INT:

@@ -20,10 +20,10 @@
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
-#include <usefull_macros.h>
 
 #include "cmdlnopts.h"
 #include "config.h"
+#include "debug.h"
 #include "fits.h"
 #include "grasshopper.h"
 #include "imagefile.h"
@@ -132,31 +132,19 @@ static void recalcexp(Image *I){
         exptime = theconf.maxexp;
         return;
     }
-    if(I->minval < 0. || I->maxval > 255.1){
-        DBG("Bad image data: min=%g, max=%g", I->minval, I->maxval);
+    size_t *histogram = get_histogram(I);
+    if(!histogram){
+        WARNX("Can't calculate histogram");
         return;
     }
-    int wh = I->width * I->height;
-    int histogram[256] = {0};
-    // algorythm works only with 8bit images!
-    #pragma omp parallel
-    {
-        int histogram_private[256] = {0};
-        #pragma omp for nowait
-        for(int i = 0; i < wh; ++i){
-            ++histogram_private[(int)I->data[i]];
-        }
-        #pragma omp critical
-        {
-            for(int i=0; i<256; ++i) histogram[i] += histogram_private[i];
-        }
-    }
-    int idx100, sum100 = 0;
+    int idx100;
+    size_t sum100 = 0;
     for(idx100 = 255; idx100 >= 0; --idx100){
         sum100 += histogram[idx100];
         if(sum100 > 100) break;
     }
-    DBG("Sum100=%d, idx100=%d", sum100, idx100);
+    FREE(histogram);
+    DBG("Sum100=%zd, idx100=%d", sum100, idx100);
     if(idx100 > 230 && idx100 < 253) return; // good values
     if(idx100 > 253){ // exposure too long
         calcexpgain(0.7*exptime);
@@ -248,13 +236,25 @@ int camcapture(void (*process)(Image*)){
         FREE(oIma->data);
         FREE(oIma);
     }
+    if(oIma){
+        FREE(oIma->data);
+        FREE(oIma);
+    }
     camdisconnect();
     DBG("CAMCAPTURE: out");
     return 1;
 }
 
-// return JSON with image status
+/**
+ * @brief camstatus - return JSON with image status
+ * @param messageid - value of "messageid"
+ * @param buf       - buffer for string
+ * @param buflen    - length of `buf`
+ * @return buf
+ */
 char *camstatus(const char *messageid, char *buf, int buflen){
+    if(!buf || buflen < 2) return NULL;
+    if(!messageid) messageid = "unknown";
     static char *impath = NULL;
     if(!impath){
         if(!(impath = realpath(GP->outputjpg, impath))){
@@ -263,9 +263,13 @@ char *camstatus(const char *messageid, char *buf, int buflen){
         }
         DBG("path: %s", impath);
     }
+    float xc, yc;
+    getcenter(&xc, &yc);
     snprintf(buf, buflen, "{ \"%s\": \"%s\", \"camstatus\": \"%sconnected\", \"impath\": \"%s\", \"imctr\": %llu, "
-             "\"fps\": %.3f, \"expmethod\": \"%s\", \"exposition\": %g, \"gain\": %g, \"brightness\": %g }\n",
+             "\"fps\": %.3f, \"expmethod\": \"%s\", \"exposition\": %g, \"gain\": %g, \"brightness\": %g, "
+             "\"xcenter\": %.1f, \"ycenter\": %.1f }\n",
              MESSAGEID, messageid, connected ? "" : "dis", impath, ImNumber, getFramesPerS(),
-             (theconf.expmethod == EXPAUTO) ? "auto" : "manual", exptime, gain, brightness);
+             (theconf.expmethod == EXPAUTO) ? "auto" : "manual", exptime, gain, brightness,
+             xc, yc);
     return buf;
 }

@@ -28,17 +28,6 @@ typedef struct{
     int h;          // height
 } Img3;
 
-/*
-// box (coordinates from upper left corner)
-typedef struct{
-    int xul;    // coordinates of upper left box corner
-    int yul;
-    int w;      // width and height
-    int h;
-    uint8_t pattern[3]; // pattern for figure filling
-} BBox;
-*/
-
 // opaque pattern for drawing
 typedef struct{
     uint8_t *data;
@@ -50,7 +39,8 @@ typedef struct{
 extern const uint8_t C_R[], C_G[], C_B[], C_K[], C_W[];
 
 void Pattern_free(Pattern **p);
-void Pattern_draw3(Img3 *img, Pattern *p, int xc, int yc, const uint8_t colr[]);
+void Pattern_draw3(Img3 *img, const Pattern *p, int xc, int yc, const uint8_t colr[]);
 Pattern *Pattern_cross(int h, int w);
+Pattern *Pattern_xcross(int h, int w);
 
 #endif // DRAW_H__

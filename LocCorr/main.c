@@ -19,11 +19,12 @@
 #include <math.h>
 #include <pthread.h>
 #include <signal.h>         // signal
+#include <stdio.h>
 #include <string.h>         // strdup
-#include <usefull_macros.h>
 
 #include "cmdlnopts.h"
 #include "config.h"
+#include "debug.h"
 #include "grasshopper.h"
 #include "improc.h"
 #include "pusirobo.h"
@@ -112,8 +113,8 @@ int main(int argc, char *argv[]){
     if(GP->throwpart < 0. || GP->throwpart > 0.99){
         ERRX("Fraction of black pixels should be in [0., 0.99]");
     }
-    if(GP->Naveraging < 2 || GP->Naveraging > MAX_AVERAGING_ARRAY_SIZE)
-        ERRX("Averaging amount should be from 2 to 25");
+    if(GP->Naveraging < 1 || GP->Naveraging > NAVER_MAX)
+        ERRX("Averaging amount should be from 1 to %d", NAVER_MAX);
     tp = chk_inp(GP->inputname);
     if(tp == T_WRONG) ERRX("Enter correct image file or directory name");
     // check ability of saving file
@@ -183,7 +184,7 @@ int main(int argc, char *argv[]){
     setpostprocess(GP->processing);
     check4running(self, GP->pidfile);
     DBG("%s started, snippets library version is %s\n", self, sl_libversion());
-    free(self);
+    free(self); self = NULL;
     signal(SIGTERM, signals); // kill (-15) - quit
     signal(SIGHUP, SIG_IGN);  // hup - ignore
     signal(SIGINT, signals);  // ctrl+C - quit

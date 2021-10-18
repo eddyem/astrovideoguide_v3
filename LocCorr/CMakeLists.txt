@@ -5,11 +5,10 @@ set(MID_VERSION "0")
 set(MAJOR_VERSION "0")
 set(VERSION "${MAJOR_VERSION}.${MID_VERSION}.${MINOR_VERSION}")
 
-project(${PROJ} VERSION ${PROJ_VERSION} LANGUAGES C)
+project(${PROJ} VERSION ${VERSION} LANGUAGES C)
 
 # default flags
-set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -O3 -std=gnu99 -march=native -fdata-sections -ffunction-sections")
-SET(CMAKE_EXE_LINKER_FLAGS "-Wl,--gc-sections")
+set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -std=gnu99")
 
 set(CMAKE_COLOR_MAKEFILE ON)
 
@@ -20,10 +19,12 @@ set(CMAKE_VERBOSE_MAKEFILE "ON")
 
 # cmake -DEBUG=1 -> debugging
 if(DEFINED EBUG AND EBUG EQUAL 1)
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wextra -Wall -Werror -W")
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Og -ggdb -fno-builtin-strlen -Wextra -Wall -Werror -W")
     set(CMAKE_BUILD_TYPE DEBUG)
     add_definitions(-DEBUG)
 else()
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -O3 -march=native -fdata-sections -ffunction-sections")
+    SET(CMAKE_EXE_LINKER_FLAGS "-Wl,--gc-sections")
     set(CMAKE_BUILD_TYPE RELEASE)
 endif()
 
@@ -69,7 +70,7 @@ link_directories(${${PROJ}_LIBRARY_DIRS} ${FLYCAP_LIBRARY_DIRS} ${BASLER_LIBRARY
 add_definitions(${CFLAGS} -DLOCALEDIR=\"${LOCALEDIR}\"
     -DPACKAGE_VERSION=\"${VERSION}\" -DGETTEXT_PACKAGE=\"${PROJ}\"
     -DMINOR_VERSION=\"${MINOR_VERSION}\" -DMID_VERSION=\"${MID_VERSION}\"
-    -DMAJOR_VERSION=\"${MAJOR_VESION}\" -DTHREAD_NUMBER=${PROCESSOR_COUNT})
+    -DMAJOR_VERSION=\"${MAJOR_VERSION}\" -DTHREAD_NUMBER=${PROCESSOR_COUNT})
 
 # -l
 target_link_libraries(${PROJ} ${${PROJ}_LIBRARIES} ${FLYCAP_LIBRARIES} ${BASLER_LIBRARIES} -lm)

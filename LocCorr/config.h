@@ -42,12 +42,12 @@
 #define BRIGHT_MIN      (0.)
 #define BRIGHT_MAX      (10.)
 // max average images counter
-#define NAVER_MAX       (50)
+#define NAVER_MAX       (25)
 // coefficients to convert dx,dy to du,dv
 #define KUVMIN           (-5000.)
 #define KUVMAX           (5000.)
 // default coefficient for corrections (move to Kdu, Kdv instead of du, dv)
-#define KCORR           (0.97)
+#define KCORR           (0.90)
 // min/max median seed
 #define MIN_MEDIAN_SEED (1)
 #define MAX_MEDIAN_SEED (7)

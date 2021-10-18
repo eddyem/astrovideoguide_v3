@@ -22,9 +22,9 @@
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
-#include <usefull_macros.h>
 
 #include "config.h"
+#include "debug.h"
 #include "grasshopper.h"
 #include "imagefile.h"
 
@@ -32,8 +32,12 @@ static fc2Context context;
 static fc2PGRGuid guid;
 static fc2Error err = FC2_ERROR_OK;
 
+#ifndef Stringify
+#define Stringify(x) #x
+#endif
+
 #define FC2FN(fn, ...) do{err = FC2_ERROR_OK; if(FC2_ERROR_OK != (err=fn(context __VA_OPT__(,) __VA_ARGS__))){ \
-    WARNX(#fn "(): %s", fc2ErrorToDescription(err)); return FALSE;}}while(0)
+    WARNX(Stringify(fn) "(): %s", fc2ErrorToDescription(err)); return FALSE;}}while(0)
 
 static void disconnect(){
     fc2DestroyContext(context);
@@ -146,6 +150,7 @@ static int geometrylimits(frameformat *max, frameformat *step){
 }
 
 static int getformat(frameformat *fmt){
+    if(!fmt) return FALSE;
     unsigned int packsz; float pc;
     fc2Format7ImageSettings f7;
     FC2FN(fc2GetFormat7Configuration, &f7, &packsz, &pc);
@@ -155,7 +160,7 @@ static int getformat(frameformat *fmt){
 }
 
 static int changeformat(frameformat *fmt){
-    FNAME();
+    if(!fmt) return FALSE;
     BOOL b;
     fc2Format7ImageSettings f7;
     f7.mode = FC2_MODE_0;
@@ -203,7 +208,7 @@ static int connect(){
 }
 
 static int GrabImage(fc2Image *convertedImage){
-    //FNAME();
+    if(!convertedImage) return FALSE;
     int ret = FALSE;
     fc2Image rawImage;
     // start capture
@@ -211,7 +216,8 @@ static int GrabImage(fc2Image *convertedImage){
     err = fc2CreateImage(&rawImage);
     if(err != FC2_ERROR_OK){
         WARNX("Error in fc2CreateImage: %s", fc2ErrorToDescription(err));
-        goto rtn;
+        fc2StopCapture(context);
+        return FALSE;
     }
     // Retrieve the image
     err = fc2RetrieveBuffer(context, &rawImage);

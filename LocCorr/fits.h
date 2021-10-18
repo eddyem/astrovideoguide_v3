@@ -22,31 +22,9 @@
 
 #include <fitsio.h>
 #include <omp.h>
-#include <stdio.h>
 #include <stdbool.h>
 
-#define Stringify(x) #x
-#define OMP_FOR(x) _Pragma(Stringify(omp parallel for x))
-
-
-typedef float Imtype; // maybe float or double only
-// this is TFLOAT or TDOUBLE depending on Imtype
-#define FITSDATATYPE    TFLOAT
-/*
-typedef double Imtype;
-#define FITSDATATYPE    TDOUBLE
-*/
-
-typedef struct{
-    int width;			// width
-    int height;			// height
-    int dtype;			// data type for image storage
-    Imtype *data;		// picture data
-    Imtype minval;      // extremal data values
-    Imtype maxval;
-    char **keylist;		// list of options for each key
-    size_t keynum;		// full number of keys (size of *keylist)
-} Image;
+#include "imagefile.h"
 
 void Image_free(Image **ima);
 bool FITS_read(const char *filename, Image **fits);

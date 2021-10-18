@@ -26,9 +26,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <usefull_macros.h>
 
 #include "config.h"
+#include "debug.h"
 #include "imagefile.h"
 #include "median.h"
 
@@ -36,8 +36,13 @@
 #define ELEM_SWAP(a, b) {register Imtype t = a; a = b; b = t;}
 #define PIX_SORT(a, b)  {if (p[a] > p[b]) ELEM_SWAP(p[a], p[b]);}
 
+static inline Imtype mean(Imtype a, Imtype b){
+    register uint16_t x = ((uint16_t)a + (uint16_t)b) / 2;
+    return (Imtype)x;
+}
+
 static Imtype opt_med2(Imtype *p){
-    return (p[0] + p[1]) * 0.5;
+    return mean(p[0], p[1]);
 }
 static Imtype opt_med3(Imtype *p){
     PIX_SORT(0, 1); PIX_SORT(1, 2); PIX_SORT(0, 1);
@@ -46,7 +51,7 @@ static Imtype opt_med3(Imtype *p){
 static Imtype opt_med4(Imtype *p){
     PIX_SORT(0, 2); PIX_SORT(1, 3);
     PIX_SORT(0, 1); PIX_SORT(2, 3);
-    return(p[1] + p[2]) * 0.5;
+    return mean(p[1], p[2]);
 }
 static Imtype opt_med5(Imtype *p){
     PIX_SORT(0, 1); PIX_SORT(3, 4); PIX_SORT(0, 3);
@@ -61,7 +66,7 @@ static Imtype opt_med6(Imtype *p){
     PIX_SORT(1, 2); PIX_SORT(3, 4);
     PIX_SORT(0, 1); PIX_SORT(2, 3); PIX_SORT(4, 5);
     PIX_SORT(1, 2); PIX_SORT(3, 4);
-    return ( p[2] + p[3] ) * 0.5;
+    return mean(p[2], p[3]);
 }
 static Imtype opt_med7(Imtype *p){
     PIX_SORT(0, 5); PIX_SORT(0, 3); PIX_SORT(1, 6);
@@ -78,7 +83,7 @@ static Imtype opt_med8(Imtype *p){
     PIX_SORT(3, 5); PIX_SORT(0, 1); PIX_SORT(2, 3);
     PIX_SORT(4, 5); PIX_SORT(6, 7); PIX_SORT(1, 4);
     PIX_SORT(3, 6);
-    return(p[3] + p[4]) * 0.5;
+    return mean(p[3], p[4]);
 }
 static Imtype opt_med9(Imtype *p){
     PIX_SORT(1, 2); PIX_SORT(4, 5); PIX_SORT(7, 8);
@@ -103,7 +108,7 @@ static Imtype opt_med16(Imtype *p){
     PIX_SORT(4, 5); PIX_SORT(6, 7); PIX_SORT(8, 9); PIX_SORT(10, 11);
     PIX_SORT(12, 13); PIX_SORT(14, 15); PIX_SORT(1, 8); PIX_SORT(3, 10);
     PIX_SORT(5, 12); PIX_SORT(7, 14); PIX_SORT(5, 8); PIX_SORT(7, 10);
-    return (p[7] + p[8]) * 0.5;
+    return mean(p[7], p[8]);
 }
 static Imtype opt_med25(Imtype *p){
     PIX_SORT(0, 1)  ; PIX_SORT(3, 4)  ; PIX_SORT(2, 4) ;
@@ -201,7 +206,7 @@ Imtype calc_median(Imtype *idata, int n){
     const medfunc fnarr[] = {opt_med2, opt_med3, opt_med4, opt_med5, opt_med6,
             opt_med7, opt_med8, opt_med9};
     if(n == 1) return *idata;
-    if(n < 10) fn = fnarr[n - 1];
+    if(n < 10) fn = fnarr[n - 2];
     else if(n == 16) fn = opt_med16;
     else if(n == 25) fn = opt_med25;
     if(fn){
@@ -229,12 +234,12 @@ typedef struct Mediator_t{
 #define maxCt(m) (((m)->ct)/2) //count of Imtypes in maxheap
 
 //returns 1 if heap[i] < heap[j]
-inline int mmless(Mediator* m, int i, int j){
+static inline int mmless(Mediator* m, int i, int j){
     return ImtypeLess(m->data[m->heap[i]],m->data[m->heap[j]]);
 }
 
 //swaps Imtypes i&j in heap, maintains indexes
-inline int mmexchange(Mediator* m, int i, int j){
+static inline int mmexchange(Mediator* m, int i, int j){
     int t = m->heap[i];
     m->heap[i] = m->heap[j];
     m->heap[j] = t;
@@ -244,12 +249,12 @@ inline int mmexchange(Mediator* m, int i, int j){
 }
 
 //swaps Imtypes i&j if i<j; returns true if swapped
-inline int mmCmpExch(Mediator* m, int i, int j){
+static inline int mmCmpExch(Mediator* m, int i, int j){
     return (mmless(m,i,j) && mmexchange(m,i,j));
 }
 
 //maintains minheap property for all Imtypes below i/2.
-void minSortDown(Mediator* m, int i){
+static inline void minSortDown(Mediator* m, int i){
     for(; i <= minCt(m); i*=2){
         if(i>1 && i < minCt(m) && mmless(m, i+1, i)) ++i;
         if(!mmCmpExch(m,i,i/2)) break;
@@ -257,7 +262,7 @@ void minSortDown(Mediator* m, int i){
 }
 
 //maintains maxheap property for all Imtypes below i/2. (negative indexes)
-void maxSortDown(Mediator* m, int i){
+static inline void maxSortDown(Mediator* m, int i){
     for(; i >= -maxCt(m); i*=2){
         if(i<-1 && i > -maxCt(m) && mmless(m, i, i-1)) --i;
     if(!mmCmpExch(m,i/2,i)) break;
@@ -266,14 +271,14 @@ void maxSortDown(Mediator* m, int i){
 
 //maintains minheap property for all Imtypes above i, including median
 //returns true if median changed
-int minSortUp(Mediator* m, int i){
+static inline int minSortUp(Mediator* m, int i){
     while (i > 0 && mmCmpExch(m, i, i/2)) i /= 2;
     return (i == 0);
 }
 
 //maintains maxheap property for all Imtypes above i, including median
 //returns true if median changed
-int maxSortUp(Mediator* m, int i){
+static inline int maxSortUp(Mediator* m, int i){
     while (i < 0 && mmCmpExch(m, i/2, i)) i /= 2;
     return (i == 0);
 }
@@ -282,7 +287,7 @@ int maxSortUp(Mediator* m, int i){
 
 //creates new Mediator: to calculate `nImtypes` running median.
 //mallocs single block of memory, caller must free.
-Mediator* MediatorNew(int nImtypes){
+static Mediator* MediatorNew(int nImtypes){
     int size = sizeof(Mediator) + nImtypes*(sizeof(Imtype)+sizeof(int)*2);
     Mediator* m = malloc(size);
     m->data = (Imtype*)(m + 1);
@@ -298,7 +303,7 @@ Mediator* MediatorNew(int nImtypes){
 }
 
 //Inserts Imtype, maintains median in O(lg nImtypes)
-void MediatorInsert(Mediator* m, Imtype v){
+static void MediatorInsert(Mediator* m, Imtype v){
     int isNew=(m->ct<m->N);
     int p = m->pos[m->idx];
     Imtype old = m->data[m->idx];
@@ -318,15 +323,16 @@ void MediatorInsert(Mediator* m, Imtype v){
 }
 
 //returns median Imtype (or average of 2 when Imtype count is even)
-Imtype MediatorMedian(Mediator* m){
+static Imtype MediatorMedian(Mediator* m){
     Imtype v = m->data[m->heap[0]];
     if ((m->ct&1) == 0) v = ImtypeMean(v, m->data[m->heap[-1]]);
     return v;
 }
 
+#if 0
 // median + min/max
-Imtype MediatorStat(Mediator* m, Imtype *minval, Imtype *maxval){
-    Imtype v= m->data[m->heap[0]];
+static Imtype MediatorStat(Mediator* m, Imtype *minval, Imtype *maxval){
+    Imtype v = m->data[m->heap[0]];
     if ((m->ct&1) == 0) v = ImtypeMean(v, m->data[m->heap[-1]]);
     Imtype min = v, max = v;
     int i;
@@ -342,6 +348,7 @@ Imtype MediatorStat(Mediator* m, Imtype *minval, Imtype *maxval){
     *maxval = max;
     return v;
 }
+#endif
 
 /**
  * filter image by median (seed*2 + 1) x (seed*2 + 1)
@@ -374,7 +381,7 @@ Image *get_median(const Image *img, int seed){
                 MediatorInsert(m, inputima[xx]);
             med[medidx] = MediatorMedian(m);
         }
-        FREE(m);
+        free(m);
     }
     Image_minmax(out);
     DBG("time for median filtering %zdx%zd of image %zdx%zd: %gs", blksz, blksz, w, h,
@@ -407,12 +414,12 @@ int get_stat(const Image *in, int seed, Image **mean, Image **std){
         Imtype *om = (M) ? &M->data[startidx] : NULL;
         Imtype *os = (S) ? &S->data[startidx] : NULL;
         for(int x = seed; x < xmax; ++x){
-            Imtype sum = 0, sum2 = 0;
+            double sum = 0, sum2 = 0;
             int yb = y + seed + 1, xm = x - seed;
             for(int yy = y - seed; yy < yb; ++yy){
                 Imtype *ptr = &in->data[yy * w + xm];
                 for(int xx = 0; xx < hsz; ++xx){
-                    Imtype d = *ptr++;
+                    double d = *ptr++;
                     sum += d;
                     sum2 += d*d;
                 }
@@ -420,10 +427,10 @@ int get_stat(const Image *in, int seed, Image **mean, Image **std){
             //DBG("sum=%g, sum2=%g, sz=%d", sum, sum2, sz);
             sum /= sz;
             if(om){
-                *om++ = sum;
+                *om++ = (Imtype)sum;
                 //DBG("mean (%d, %d): %g", x, y, sum);
             }
-            if(os) *os++ = sqrt(sum2/sz - sum*sum);
+            if(os) *os++ = (Imtype)sqrt(sum2/sz - sum*sum);
         }
     }
     if(mean){
@@ -435,81 +442,5 @@ int get_stat(const Image *in, int seed, Image **mean, Image **std){
         *std = S;
     }
     DBG("time for mean/sigma computation: %gs", dtime() - t0);
-    return TRUE;
-}
-
-/**
- * @brief calc_background - Simple background calculation by histogram
- * @param img (i) - input image (here will be modified its top2proc field)
- * @param bk (o)  - background value
- * @return 0 if error
- */
-int calc_background(Image *img, Imtype *bk){
-    //DBG("image: min=%g, max=%g", img->minval, img->maxval);
-    if(!img || !bk) return FALSE;
-    if(img->maxval - img->minval < DBL_EPSILON){
-        WARNX("Zero or overilluminated image!");
-        return FALSE;
-    }
-    if(theconf.fixedbkg){
-        *bk = theconf.fixedbkg;
-        return TRUE;
-    }
-    int w = img->width, h = img->height, wh = w*h;
-    Imtype min = img->minval, ampl = img->maxval - min;
-    int histogram[256] = {0};
-    DBG("min: %g, max: %g, ampl: %g", min, img->maxval, ampl);
-    #pragma omp parallel
-    {
-        int histogram_private[256] = {0};
-        #pragma omp for nowait
-        for(int i = 0; i < wh; ++i){
-            int newval = (int)((((img->data[i]) - min)/ampl)*255. + 0.5);
-            ++histogram_private[newval];
-        }
-        #pragma omp critical
-        {
-            for(int i=0; i<256; ++i) histogram[i] += histogram_private[i];
-        }
-    }
-    int modeidx = 0, modeval = 0;
-    for(int i = 0; i < 256; ++i)
-        if(modeval < histogram[i]){
-            modeval = histogram[i];
-            modeidx = i;
-        }
-    //DBG("Mode=%g @ idx%d (N=%d)", ((Imtype)modeidx / 255.)*ampl, modeidx, modeval);
-    int diff2[256] = {0};
-    for(int i = 2; i < 254; ++i) diff2[i] = (histogram[i+2]+histogram[i-2]-2*histogram[i])/4;
-    if(modeidx < 2) modeidx = 2;
-    if(modeidx > 253){
-        WARNX("Overilluminated image");
-        return FALSE; // very bad image: overilluminated
-    }
-    int borderidx = modeidx;
-   // green("2\n");
-    for(int i = modeidx; i < 254; ++i){ // search bend-point by second derivate
-     //   printf("%d: %d, %d\n", i, diff2[i], diff2[i+1]);
-        if(diff2[i] <= 0 && diff2[i+1] <=0){
-            borderidx = i; break;
-        }
-    }
-    //DBG("borderidx=%d -> %d", borderidx, (borderidx+modeidx)/2);
-    //borderidx = (borderidx + modeidx) / 2;
-    Imtype borderval = ((Imtype)borderidx / 255.)*ampl + min;
-    if(bk) *bk = borderval;
-    //green("HISTO:\n");
-    //for(int i = 0; i < 256; ++i) printf("%d:\t%d\t%d\n", i, histogram[i], diff2[i]);
-    // calculate values of upper 2% border
-#if 0
-    Image *out = Image_sim(img);
-    //DBG("found border: %g @ %d", borderval, borderidx);
-    OMP_FOR()
-    for(int i = 0; i < wh; ++i){
-        register Imtype val = img->data[i];
-        if(val > borderval) out->data[i] = val - borderval;
-    }
-    Image_minmax(out);
-#endif
     return TRUE;
 }

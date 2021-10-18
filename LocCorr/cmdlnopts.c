@@ -23,10 +23,10 @@
 #include <string.h>
 #include <strings.h>
 #include <math.h>
-#include <usefull_macros.h>
 
 #include "cmdlnopts.h"
 #include "config.h"
+#include "debug.h"
 #include "improc.h"
 
 /*
@@ -69,7 +69,7 @@ static myoption cmdlnopts[] = {
     {"logfile", NEED_ARG,   NULL,   'l',    arg_string, APTR(&G.logfile),   _("file to save logs (default: none)")},
     {"pidfile", NEED_ARG,   NULL,   'P',    arg_string, APTR(&G.pidfile),   _("pidfile (default: " DEFAULT_PIDFILE ")")},
     {"verbose", NO_ARGS,    NULL,   'v',    arg_none,   APTR(&G.verb),      _("increase verbosity level of log file (each -v increased by 1)")},
-    {"input",   NEED_ARG,   NULL,   'i',    arg_string, APTR(&G.inputname), _("file or directory name for monitoring (or grasshopper for capturing)")},
+    {"input",   NEED_ARG,   NULL,   'i',    arg_string, APTR(&G.inputname), _("file or directory name for monitoring (or grasshopper/basler for capturing)")},
     {"blackp",  NEED_ARG,   NULL,   'b',    arg_double, APTR(&G.throwpart), _("fraction of black pixels to throw away when make histogram eq")},
 //    {"radius",  NEED_ARG,   NULL,   'r',    arg_int,    APTR(&G.medradius), _("radius of median filter (r=1 -> 3x3, r=2 -> 5x5 etc.)")},
     {"equalize", NO_ARGS,   NULL,   'e',    arg_int,    APTR(&G.equalize),  _("make historam equalization of saved jpeg")},

@@ -1,0 +1,9 @@
+#!/bin/sh
+
+ALLOC=$(grep ALLOCSZ DEBUG.log)
+FREE=$(grep FREESZ DEBUG.log)
+
+echo "Total: $(echo "$ALLOC" | wc -l) allocations and $(echo "$FREE" | wc -l) frees"
+AL=$(echo "$ALLOC" | sed 's/ALLOCSZ(\([[:digit:]]*\))/\1/' | awk 'BEGIN{x=0;} {x=x+$1;} END{print x;}')
+FR=$(echo "$FREE" | sed 's/FREESZ(\([[:digit:]]*\))/\1/' | awk 'BEGIN{x=0;} {x=x+$1;} END{print x;}')
+echo "Allocated: $AL bytes, Freed: $FR bytes, difference: $((AL - FR)) bytes"
