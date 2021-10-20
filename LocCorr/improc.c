@@ -275,8 +275,9 @@ void process_file(Image *I){
                         int H = I->height;
                         // draw current star centroid
                         Pattern_draw3(&i3, cross, Objects[0].xc, H-Objects[0].yc, C_G);
-                        xc = Objects[0].xc;
-                        yc = Objects[0].yc;
+                        // add offset to show in target system
+                        xc = Objects[0].xc + theconf.xoff;
+                        yc = Objects[0].yc + theconf.yoff;
                         // draw other centroids
                         for(int i = 1; i < objctr; ++i)
                             Pattern_draw3(&i3, cross, Objects[i].xc, H-Objects[i].yc, C_R);

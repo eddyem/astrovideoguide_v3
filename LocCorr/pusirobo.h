@@ -21,6 +21,9 @@
 
 #include "improc.h"
 
+// set state to `disconnect` after this amount of errors in `moving_finished`
+#define MAX_ERR_CTR     (15)
+
 extern steppersproc pusyCANbus;
 
 // try to connect to local pusirobo server

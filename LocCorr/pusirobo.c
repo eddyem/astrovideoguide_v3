@@ -120,6 +120,8 @@ typedef struct{
 } relaystate;
 static _Atomic relaystate relay;
 
+static int errctr = 0; // sending messages error counter (if > MAX_ERR_CTR, set state to disconnected)
+
 static pusistate state = PUSI_DISCONN;   // server state
 // the `ismoving` flag allows not to make corrections with bad images made when moving
 static volatile atomic_bool ismoving = FALSE; // == TRUE if any of steppers @hanging part is moving
@@ -147,7 +149,20 @@ static void pusi_disconnect(){
     sockfd = -1;
     Umoving = Vmoving = Fmoving = ismoving = FALSE;
     state = PUSI_DISCONN;
+    LOGWARN("Canserver disconnected");
 }
+
+static int too_much_errors(){
+    if(++errctr >= MAX_ERR_CTR){
+        LOGERR("Canserver: too much errors -> DISCONNECT");
+        errctr = 0;
+        pusi_disconnect();
+        return TRUE;
+    }
+    return FALSE;
+}
+
+#define clr_errors()    do{errctr = 0;}while(0)
 
 static char *findval(const char *par, const char *statusmesg){
     if(!statusmesg || !par) return NULL;
@@ -255,6 +270,7 @@ static int waitOK(char **retval){
             *retval = strdup(ok + sizeof(ANSOK)-1);
             //DBG("RETVAL: '%s'", *retval);
         }
+        clr_errors();
     }else{
         LOGWARN("didn't get OK answer");
     }
@@ -443,11 +459,14 @@ static int moving_finished(const char *mesgstatus, volatile atomic_int *position
     char *ans = NULL;
     int ret = TRUE;
     if(send_message(mesgstatus, &ans) && getparval(PARstatus, ans, &val)){
+        errctr = 0;
         //DBG("send(%s) true: %s %g\n", mesgstatus, ans, val);
     }else{
         WARNX("send(%s) false: %s %g\n", mesgstatus, ans, val);
-        LOGDBG("send(%s) false: %s %g\n", mesgstatus, ans, val);
-        pusi_disconnect();
+        if(too_much_errors()){
+            LOGDBG("send(%s) false: %s %g", mesgstatus, ans, val);
+        }
+        if(ans) free(ans);
         return FALSE;
     }
     int ival = (int)val;
@@ -472,9 +491,8 @@ static int move_motor(const char *movecmd, int s){
     snprintf(buf, 255, "%s %d", movecmd, s);
     if(!send_message(buf, &ans)){
         WARNX("can't send message");
-        LOGDBG("can't send message");
-        pusi_disconnect();
-        FREE(ans);
+        if(too_much_errors()) LOGWARN("Canserver: can't move motor");
+        if(ans) free(ans);
         return FALSE;
     }
     int ret = TRUE;
@@ -500,6 +518,7 @@ static void process_movetomiddle_stage(){
             else{
                 LOGWARN("GOTO middle: err in move command");
                 sstatus = SETUP_INIT;
+                if(too_much_errors()) sstatus = SETUP_NONE;
             }
         break;
         case SETUP_WAITUVMID: // wait for the middle
@@ -507,6 +526,7 @@ static void process_movetomiddle_stage(){
             if(!send_message(Fsetzero, NULL) || !send_message(Usetzero, NULL) || !send_message(Vsetzero, NULL)){
                 LOGWARN("GOTO middle: err in set 0 command");
                 sstatus = SETUP_INIT;
+                if(too_much_errors()) sstatus = SETUP_NONE;
                 return;
             }
             Uposition = Vposition = Fposition = 0;
@@ -537,6 +557,7 @@ static void process_setup_stage(){
             else{
                 LOGWARN("Can't move U/V -> 0");
                 sstatus = SETUP_INIT;
+                if(too_much_errors()) sstatus = SETUP_NONE;
             }
         break;
         case SETUP_WAITUVMID: // wait for the middle
@@ -545,6 +566,7 @@ static void process_setup_stage(){
             else{
                 LOGWARN("Can't move U -> middle");
                 sstatus = SETUP_INIT;
+                if(too_much_errors()) sstatus = SETUP_NONE;
             }
         break;
         case SETUP_WAITU0: // wait while U moves to zero
@@ -557,6 +579,7 @@ static void process_setup_stage(){
             else{
                 LOGWARN("Can't move U -> max");
                 sstatus = SETUP_INIT;
+                if(too_much_errors()) sstatus = SETUP_NONE;
             }
         break;
         case SETUP_WAITUMAX: // wait while U moves to UVworkrange
@@ -568,6 +591,7 @@ static void process_setup_stage(){
             else{
                 LOGWARN("Can't move U -> mid OR/AND V -> min");
                 sstatus = SETUP_INIT;
+                if(too_much_errors()) sstatus = SETUP_NONE;
             }
         break;
         case SETUP_WAITV0: // wait while V moves to 0
@@ -579,6 +603,7 @@ static void process_setup_stage(){
             else{
                 LOGWARN("Can't move V -> max");
                 sstatus = SETUP_INIT;
+                if(too_much_errors()) sstatus = SETUP_NONE;
             }
         break;
         case SETUP_WAITVMAX: // wait while V moves to UVworkrange
@@ -674,7 +699,10 @@ static int try2correct(double dX, double dY){
     LOGDBG("try2correct(): move from (%d, %d) to (%d, %d) (abs: %d, %d), delta (%.1f, %.1f)",
            Uposition, Vposition, Unew, Vnew, Uposition + (int)(dU/KCORR),
            Vposition + (int)(dV/KCORR), dU, dV);
-    return (moveU((int)dU) && moveV((int)dV));
+    int ret = FALSE;
+    if(moveU((int)dU) && moveV((int)dV)) ret = TRUE;
+    if(!ret && too_much_errors()) LOGERR("Canserver: stop corrections");
+    return ret;
 }
 
 // global variable proc_corr
@@ -924,7 +952,7 @@ static void *pusi_process_states(_U_ void *arg){
             case PUSI_FIX:   // process corrections
                 if(coordsRdy){
                     coordsRdy = FALSE;
-                    red("GET AVERAGE -> correct\n");
+                    DBG("GET AVERAGE -> correct\n");
                     double xtg = theconf.xtarget - theconf.xoff, ytg = theconf.ytarget - theconf.yoff;
                     double xdev = xtg - Xtarget, ydev = ytg - Ytarget;
                     double corr = sqrt(xdev*xdev + ydev*ydev);
@@ -998,13 +1026,13 @@ static char *relaycmd(const char *val, char *buf, int buflen){
                 int rval = r.relays;
                 if(v) rval |= 1<<tmpno;
                 else rval &= ~(1<<tmpno);
-                green("Relay %d -> %d", r.relays, rval);
+                DBG("Relay %d -> %d", r.relays, rval);
                 snprintf(mbuf, 511, "%s %d %d", RelayCmd, R_RELAY + relaySetter, rval);
                 if(send_message(mbuf, NULL)) ans = OK;
             }
         }else if(1 == sscanf(par, "PWM%d", &tmpno)){ // PWM command
             if(tmpno >= 0 && tmpno < 4 && v > -1 && v < 256){
-                green("PWM %d -> %d\n", tmpno, v);
+                DBG("PWM %d -> %d\n", tmpno, v);
                 r.PWM[tmpno] = v;
                 snprintf(mbuf, 511, "%s %d %u %u %u", RelayCmd, R_PWM + relaySetter, r.PWM[0], r.PWM[1], r.PWM[2]);
                 if(send_message(mbuf, NULL)) ans = OK;
