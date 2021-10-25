@@ -175,6 +175,7 @@ int camcapture(void (*process)(Image*)){
             DBG("Disconnected");
             connected = theCam->connect();
             sleep(1);
+            changeformat();
             continue;
         }
         if(fabsf(oldbrightness - brightness) > FLT_EPSILON){ // new brightness
