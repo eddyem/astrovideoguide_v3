@@ -46,7 +46,6 @@ static void changeformat(){
     if(!theCam) return;
     if(maxformat.h < 1 || maxformat.w < 1){
         WARNX("Bad max format data");
-        LOGWARN("Bad max format data");
         return;
     }
     if(stepformat.h < 1 || stepformat.w < 1){

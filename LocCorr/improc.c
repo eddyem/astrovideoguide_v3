@@ -266,11 +266,12 @@ void process_file(Image *I){
                         outp = equalize(I, 3, theconf.throwpart);
                     else
                         outp = linear(I, 3);
-                    static Pattern *cross = NULL;
+                    static Pattern *cross = NULL, *crossL = NULL;
                     if(!cross) cross = Pattern_xcross(33, 33);
+                    if(!crossL) crossL = Pattern_xcross(51, 51);
                     Img3 i3 = {.data = outp, .w = I->width, .h = H};
                     // draw fiber center position
-                    Pattern_draw3(&i3, cross, theconf.xtarget-theconf.xoff, H-(theconf.ytarget-theconf.yoff), C_B);
+                    Pattern_draw3(&i3, crossL, theconf.xtarget-theconf.xoff, H-(theconf.ytarget-theconf.yoff), C_R);
                     if(objctr){ // draw crosses @ objects' centers
                         int H = I->height;
                         // draw current star centroid
@@ -280,7 +281,7 @@ void process_file(Image *I){
                         yc = Objects[0].yc + theconf.yoff;
                         // draw other centroids
                         for(int i = 1; i < objctr; ++i)
-                            Pattern_draw3(&i3, cross, Objects[i].xc, H-Objects[i].yc, C_R);
+                            Pattern_draw3(&i3, cross, Objects[i].xc, H-Objects[i].yc, C_B);
                     }else{xc = -1.; yc = -1.;}
                     char *tmpnm = MALLOC(char, strlen(GP->outputjpg) + 5);
                     sprintf(tmpnm, "%s-tmp", GP->outputjpg);

@@ -21,6 +21,8 @@
 #include <signal.h>         // signal
 #include <stdio.h>
 #include <string.h>         // strdup
+#include <sys/prctl.h>      //prctl
+#include <sys/wait.h>       // wait
 
 #include "cmdlnopts.h"
 #include "config.h"
@@ -38,7 +40,7 @@ static InputType tp;
 void signals(int sig){
     if(sig){
         signal(sig, SIG_IGN);
-        DBG("Get signal %d, quit.\n", sig);
+        DBG("Get signal %d.", sig);
     }
     stopwork = TRUE;
     DBG("exit %d", sig);
@@ -181,7 +183,6 @@ int main(int argc, char *argv[]){
             theconf.stpserverport = GP->pusiservport;
         }
     }
-    setpostprocess(GP->processing);
     check4running(self, GP->pidfile);
     DBG("%s started, snippets library version is %s\n", self, sl_libversion());
     free(self); self = NULL;
@@ -190,6 +191,21 @@ int main(int argc, char *argv[]){
     signal(SIGINT, signals);  // ctrl+C - quit
     signal(SIGQUIT, signals); // ctrl+\ - quit
     signal(SIGTSTP, SIG_IGN); // ignore ctrl+Z
+    while(1){ // guard for dead processes
+        pid_t childpid = fork();
+        if(childpid){ // father
+            LOGMSG("create child with PID %d\n", childpid);
+            DBG("Created child with PID %d\n", childpid);
+            wait(NULL);
+            LOGMSG("child %d died\n", childpid);
+            WARNX("Child %d died\n", childpid);
+            sleep(5);
+        }else{ // son
+            prctl(PR_SET_PDEATHSIG, SIGTERM); // send SIGTERM to child when parent dies
+            break; // go out to normal functional
+        }
+    }
+    setpostprocess(GP->processing);
     if(GP->logXYname) openXYlog(GP->logXYname);
     LOGMSG("Start application...");
     LOGDBG("xtag=%g, ytag=%g", theconf.xtarget, theconf.ytarget);

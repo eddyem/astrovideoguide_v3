@@ -133,7 +133,8 @@ static double Xtarget = 0., Ytarget = 0.;
 static volatile atomic_bool chfocus = FALSE;
 static volatile atomic_int newfocpos = 0;
 
-static int sockfd = -1; // server file descriptor
+static volatile atomic_int sockfd = -1; // server file descriptor
+static volatile atomic_bool motorsoff = FALSE; // flag to disconnect
 
 // mutex for message sending
 static pthread_mutex_t sendmesg_mutex = PTHREAD_MUTEX_INITIALIZER;
@@ -144,15 +145,24 @@ static volatile atomic_int dUmove = 0, dVmove = 0;
 static volatile atomic_bool Umoving = FALSE, Vmoving = FALSE, Fmoving = FALSE;
 static uint8_t fixerr = 0; // ==1 if can't fixed
 
+static void pusi_disc(){
+    motorsoff = TRUE;
+}
+
 static void pusi_disconnect(){
-    if(sockfd > -1) close(sockfd);
-    sockfd = -1;
+    DBG("Try to disconnect");
+    if(sockfd > -1){
+        DBG("sockfd closed");
+        close(sockfd);
+    }
     Umoving = Vmoving = Fmoving = ismoving = FALSE;
     state = PUSI_DISCONN;
+    sockfd = -1;
     LOGWARN("Canserver disconnected");
 }
 
 static int too_much_errors(){
+    // FNAME();
     if(++errctr >= MAX_ERR_CTR){
         LOGERR("Canserver: too much errors -> DISCONNECT");
         errctr = 0;
@@ -165,6 +175,7 @@ static int too_much_errors(){
 #define clr_errors()    do{errctr = 0;}while(0)
 
 static char *findval(const char *par, const char *statusmesg){
+    // FNAME();
     if(!statusmesg || !par) return NULL;
     char *pair = strcasestr(statusmesg, par);
     if(!pair) return NULL;
@@ -184,6 +195,7 @@ static char *findval(const char *par, const char *statusmesg){
  * @return TRUE if parameter found and set `val` to its value
  */
 static int getparval(const char *par, const char *statusmesg, double *val){
+    // FNAME();
     char *parval = findval(par, statusmesg);
     if(!parval) return FALSE;
     if(!val) return TRUE;
@@ -192,6 +204,7 @@ static int getparval(const char *par, const char *statusmesg, double *val){
 }
 // the same as getparval, but check for "=OK"
 static int getOKval(const char *par, const char *statusmesg){
+    // FNAME();
     //DBG("getOKval('%s', '%s')", par, statusmesg);
     char *parval = findval(par, statusmesg);
     if(!parval) return FALSE;
@@ -230,6 +243,7 @@ static int canread(){
 
 // clear incoming buffer
 static void clearbuf(){
+    // FNAME();
     if(sockfd < 0) return;
     char buf[256] = {0};
     while(canread() && 0 < read(sockfd, buf, 256)) DBG("clearbuf: %s", buf);
@@ -241,12 +255,14 @@ static void clearbuf(){
  * @return FALSE if timeout or no "OK"
  */
 static int waitOK(char **retval){
+    // FNAME();
     if(sockfd < 0) return FALSE;
 #define BUFFERSZ    (2047)
     char buf[BUFFERSZ+1];
     int Nread = 0, ctr = 0;
     double t0 = dtime();
-    while(dtime() - t0 < WAITANSTIME && Nread < BUFFERSZ){
+    //DBG("read ans");
+    while(dtime() - t0 < WAITANSTIME && Nread < BUFFERSZ && sockfd > 0){
         if(!canread()){
             //DBG("No answer @ %d try", ctr);
             if(++ctr > 3) break;
@@ -258,8 +274,8 @@ static int waitOK(char **retval){
         if(n == 0) break;
         if(n < 0) return FALSE; // disconnect or error
         Nread += n;
-        buf[Nread] = 0;
     }
+    buf[Nread] = 0;
     //DBG("All buffer: '%s'", buf);
     int ret = FALSE;
     char *ok = strstr(buf, ANSOK);
@@ -286,6 +302,7 @@ static int waitOK(char **retval){
  * @return FALSE if failed (should reconnect)
  */
 static int send_message(const char *msg, char **ans){
+    // FNAME();
     if(!msg || sockfd < 0) return FALSE;
     size_t L = strlen(msg);
     if(pthread_mutex_lock(&sendmesg_mutex)) return FALSE;
@@ -307,6 +324,7 @@ static int send_message(const char *msg, char **ans){
  * @return amount of args found (0 - if answer is wrong or no n'th arg found)
  */
 static int getRansArg(char *ans, uint8_t buf[8]){
+    // FNAME();
     //DBG("check relay answer, ans: %s", ans);
     if(!ans) return 0;
     if(strncmp(ans, RelayAns, sizeof(RelayAns)-1)) return 0; // bad answer
@@ -321,6 +339,7 @@ static int getRansArg(char *ans, uint8_t buf[8]){
  * @return FALSE if failed
  */
 static int chkRelay(){
+    // FNAME();
     char *ans = NULL;
     char buf[512];
     uint8_t canbuf[8];
@@ -348,6 +367,7 @@ rtn:
 }
 
 static void send_message_nocheck(const char *msg){
+    // FNAME();
     if(!msg || sockfd < 0) return;
     size_t L = strlen(msg);
     if(pthread_mutex_lock(&sendmesg_mutex)) return;
@@ -382,7 +402,6 @@ static int setSpeed(const char *mesg, const char *name){
  * @return FALSE if failed
  */
 static int pusi_connect_server(){
-    Umoving = Fmoving = Vmoving = ismoving = FALSE;
     DBG("pusi_connect(%d)", theconf.stpserverport);
     char port[10];
     snprintf(port, 10, "%d", theconf.stpserverport);
@@ -439,6 +458,7 @@ static pthread_t processingthread;
  * @return FALSE if failed to connect immediately
  */
 int pusi_connect(){
+    DBG("Try to connect");
     int c = pusi_connect_server();
     if(pthread_create(&processingthread, NULL, pusi_process_states, NULL)){
         LOGERR("pthread_create() for pusirobo server failed");
@@ -447,14 +467,9 @@ int pusi_connect(){
     return c;
 }
 
-// stop processing & disconnect
-static void pusi_stop(){
-    pthread_join(processingthread, NULL);
-    pusi_disconnect();
-}
-
 // return TRUE if motor is stopped
 static int moving_finished(const char *mesgstatus, volatile atomic_int *position){
+    // FNAME();
     double val = 0.;
     char *ans = NULL;
     int ret = TRUE;
@@ -732,7 +747,7 @@ static void pusi_process_corrections(double X, double Y){
 static int pusi_setstate(pusistate newstate){
     if(newstate == state) return TRUE;
     if(newstate == PUSI_DISCONN){
-        pusi_disconnect();
+        pusi_disc();
         return TRUE;
     }
     if(state == PUSI_DISCONN){
@@ -748,6 +763,7 @@ static int pusi_setstate(pusistate newstate){
 // get current status (global variable stepstatus)
 // return JSON string with different parameters
 static char *pusi_status(const char *messageid, char *buf, int buflen){
+    // FNAME();
     int l;
     char *bptr = buf;
     const char *s = NULL, *stage = NULL;
@@ -849,6 +865,7 @@ static strstate stringstatuses[] = {
 
 // try to set new status (global variable stepstatus)
 static char *set_pusistatus(const char *newstatus, char *buf, int buflen){
+    // FNAME();
     strstate *s = stringstatuses;
     pusistate newstate = PUSI_UNDEFINED;
     while(s->str){
@@ -882,22 +899,34 @@ static char *set_pusistatus(const char *newstatus, char *buf, int buflen){
 
 // MAIN THREAD
 static void *pusi_process_states(_U_ void *arg){
-    FNAME();
+    // FNAME();
     static bool first = TRUE; // flag for logging when can't reconnect
     while(!stopwork){
         usleep(10000);
+        // check for disconnection flag
+        if(motorsoff){
+            motorsoff = FALSE;
+            pusi_disconnect();
+            sleep(1);
+            continue;
+        }
         // check for moving
         if(state == PUSI_DISCONN){
+            DBG("DISCONNECTED - try to connect");
             sleep(1);
             pusi_connect_server();
             continue;
         }
         // check relay
+        //DBG("relay");
         chkRelay();
+        //DBG("U");
         if(moving_finished(Ustatus, &Uposition)) Umoving = FALSE;
         else Umoving = TRUE;
+        //DBG("V");
         if(moving_finished(Vstatus, &Vposition)) Vmoving = FALSE;
         else Vmoving = TRUE;
+        //DBG("F");
         if(moving_finished(Fstatus, &Fposition)) Fmoving = FALSE;
         else Fmoving = TRUE;
         if(Umoving || Vmoving || Fmoving) ismoving = TRUE;
@@ -975,6 +1004,7 @@ static void *pusi_process_states(_U_ void *arg){
                 break;
         }
     }
+    DBG("thread stopped");
     return NULL;
 }
 
@@ -1045,7 +1075,7 @@ static char *relaycmd(const char *val, char *buf, int buflen){
 }
 
 steppersproc pusyCANbus = {
-    .stepdisconnect = pusi_stop,
+    .stepdisconnect = pusi_disc,
     .proc_corr = pusi_process_corrections,
     .stepstatus = pusi_status,
     .setstepstatus = set_pusistatus,

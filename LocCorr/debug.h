@@ -28,14 +28,14 @@ void makedebuglog();
 void *my_malloc(size_t N, size_t S);
 void my_free(void *ptr);
 
-#undef FNAME
+//#undef FNAME
 #undef ALLOC
 #undef MALLOC
 #undef FREE
 #define _LOG(...)       do{if(!debuglog) makedebuglog(); sl_putlogt(1, debuglog, LOGLEVEL_ERR, __VA_ARGS__);}while(0)
 #define DBGLOG(...)     do{_LOG("%s (%s, line %d)", __func__, __FILE__, __LINE__); \
                            sl_putlogt(0, debuglog, LOGLEVEL_ERR, __VA_ARGS__);}while(0)
-#define FNAME()         _LOG("%s (%s, line %d)", __func__, __FILE__, __LINE__)
+//#define FNAME()         _LOG("%s (%s, line %d)", __func__, __FILE__, __LINE__)
 
 #define _str(x) #x
 #define ALLOC(type, var, size)  DBGLOG("%s *%s = ALLOC(%d)", _str(type), _str(var), size*sizeof(type)); \
