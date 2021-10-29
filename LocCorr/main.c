@@ -33,11 +33,13 @@
 #include "socket.h"
 
 static InputType tp;
+static pid_t childpid;
 
 /**
  * We REDEFINE the default WEAK function of signal processing
  */
 void signals(int sig){
+    if(childpid) exit(sig); // father -> do nothin @ end
     if(sig){
         signal(sig, SIG_IGN);
         DBG("Get signal %d.", sig);
@@ -192,7 +194,7 @@ int main(int argc, char *argv[]){
     signal(SIGQUIT, signals); // ctrl+\ - quit
     signal(SIGTSTP, SIG_IGN); // ignore ctrl+Z
     while(1){ // guard for dead processes
-        pid_t childpid = fork();
+        childpid = fork();
         if(childpid){ // father
             LOGMSG("create child with PID %d\n", childpid);
             DBG("Created child with PID %d\n", childpid);
