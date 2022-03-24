@@ -16,35 +16,47 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include <omp.h>
 #include <math.h>
+#include <pthread.h>
 #include <signal.h>         // signal
-#include <stb/stb_image_write.h>
-#include <stdio.h>          // printf
-#include <stdlib.h>         // exit, free
+#include <stdio.h>
 #include <string.h>         // strdup
-#include <time.h>
-#include <unistd.h>         // sleep
-#include <usefull_macros.h>
+#include <sys/prctl.h>      //prctl
+#include <sys/wait.h>       // wait
 
-#include "binmorph.h"
 #include "cmdlnopts.h"
-#include "draw.h"
-#include "inotify.h"
-#include "fits.h"
-#include "imagefile.h"
-#include "median.h"
+#include "config.h"
+#include "debug.h"
+#include "grasshopper.h"
+#include "improc.h"
+#include "pusirobo.h"
+#include "socket.h"
+
+static InputType tp;
+static pid_t childpid;
 
 /**
  * We REDEFINE the default WEAK function of signal processing
  */
 void signals(int sig){
+    if(childpid) exit(sig); // father -> do nothin @ end
     if(sig){
         signal(sig, SIG_IGN);
-        DBG("Get signal %d, quit.\n", sig);
+        DBG("Get signal %d.", sig);
     }
-    LOGERR("Exit with status %d", sig);
-    if(GP && GP->pidfile) // remove unnesessary PID file
+    stopwork = TRUE;
+    DBG("exit %d", sig);
+    saveconf(NULL);
+    if(GP && GP->pidfile){ // remove unnesessary PID file
+        DBG("unlink(GP->pidfile)");
         unlink(GP->pidfile);
+    }
+    if(theSteppers && theSteppers->stepdisconnect) theSteppers->stepdisconnect();
+    DBG("closeXYlog()");
+    closeXYlog();
+    DBG("EXIT %d", sig);
+    LOGERR("Exit with status %d", sig);
     exit(sig);
 }
 
@@ -52,12 +64,18 @@ void iffound_default(pid_t pid){
     ERRX("Another copy of this process found, pid=%d. Exit.", pid);
 }
 
+static void *procinp_thread(_U_ void* arg){
+    int p = process_input(tp, GP->inputname);
+    LOGDBG("process_input=%d", p);
+    return NULL;
+}
+
 static InputType chk_inp(const char *name){
     if(!name) ERRX("Point file or directory name to monitor");
-    InputType tp = chkinput(GP->inputname);
-    if(T_WRONG == tp) return T_WRONG;
+    InputType itp = chkinput(GP->inputname);
+    if(T_WRONG == itp) return T_WRONG;
     green("\n%s is a ", name);
-    switch(tp){
+    switch(itp){
         case T_DIRECTORY:
             printf("directory");
         break;
@@ -79,255 +97,40 @@ static InputType chk_inp(const char *name){
         case T_GZIP:
             printf("maybe fits.gz?");
         break;
+        case T_CAPT_GRASSHOPPER:
+            printf("capture grasshopper camera");
+        break;
+        case T_CAPT_BASLER:
+            printf("capture basler camera");
+        break;
         default:
             printf("Unsupported type\n");
             return T_WRONG;
     }
     printf("\n");
-    return tp;
-}
-
-static bool save_fits(Image *I, const char *name){
-    unlink(name);
-    return FITS_write(name, I);
-}
-
-static void savebin(uint8_t *b, int W, int H, const char *name){
-    Image *I = bin2Im(b, W, H);
-    if(I){
-        save_fits(I, name);
-        Image_free(&I);
-    }
-}
-//++npoints, b->area, Isum, wh, xc, yc, x2c, y2c
-typedef struct{
-    uint32_t area;      // object area in pixels
-    double Isum;        // total object's intensity over background
-    double WdivH;       // width of object's box divided by height
-    double xc; double yc;// centroid coordinates
-    double xsigma;      // STD by horizontal and vertical axes
-    double ysigma;
-} object;
-
-// function for Qsort
-int compObjs(const void *a, const void *b){
-    const object *oa = (const object*)a;
-    const object *ob = (const object*)b;
-    double idiff = (oa->Isum - ob->Isum)/(oa->Isum + ob->Isum);
-    if(fabs(idiff) > GP->intensthres) return (idiff > 0) ? -1:1;
-    double r2a = oa->xc * oa->xc + oa->yc * oa->yc;
-    double r2b = ob->xc * ob->xc + ob->yc * ob->yc;
-    return (r2a < r2b) ? -1 : 1;
-}
-
-static void process_file(const char *name){
-#ifdef EBUG
-    double t0 = dtime(), tlast = t0;
-#define DELTA(p) do{double t = dtime(); DBG("---> %s @ %gms (delta: %gms)", p, (t-t0)*1e3, (t-tlast)*1e3); tlast = t;}while(0)
-#else
-#define DELTA(x)
-#endif
-    // I - original image
-    // M - median filtering
-    // mean - local mean
-    // std  - local STD
-    /**** read original image ****/
-    Image *I = Image_read(name);
-    DELTA("Imread");
-    if(!I){
-        WARNX("Can't read");
-        return;
-    }
-    int W = I->width, H = I->height;
-    I->dtype = FLOAT_IMG;
-    save_fits(I, "fitsout.fits");
-    DELTA("Save original");
-    /*
-    uint8_t *outp = NULL;
-    if(GP->equalize)
-        outp = equalize(I, 3, GP->throwpart);
-    else
-        outp = linear(I, 3);
-    // draw test crosses
-    Pattern *cross = Pattern_cross(301, 301);
-    Img3 i3 = {.data = outp, .w = I->width, .h = I->height};
-    Pattern_draw3(&i3, cross, I->width-100, I->height-100, C_R);
-    Pattern_draw3(&i3, cross, I->width/2, I->height/2, C_G);
-    Pattern_draw3(&i3, cross, 100, 100, C_W);
-    Pattern_free(&cross);
-    DBG("Try to write %s", name);
-    stbi_write_jpg("jpegout.jpg", I->width, I->height, 3, outp, 95);
-    FREE(outp);*/
-#ifdef GETMEDIAN
-    /**** get median image ****/
-    Image *M = get_median(I, GP->medradius);
-    if(M){
-        DELTA("Got median");
-        /*outp = linear(M, 3);
-        stbi_write_jpg("median.jpg", I->width, I->height, 3, outp, 95);
-        FREE(outp);*/
-        save_fits(M, "median.fits");
-        DELTA("Save median");
-#endif
-/*
-        Image *mean = NULL, *std = NULL;
-        if(get_stat(I, GP->medradius, &mean, &std)){
-            DBG("Save std & mean");
-            save_fits(mean, "mean.fits");
-            save_fits(std, "std.fits");
-            int wh = I->width*I->height;
-            Image *diff = Image_sim(I);
-            OMP_FOR()
-            for(int i = 0; i < wh; ++i){
-                Imtype pixval = fabs(I->data[i] - M->data[i]);
-                //register Imtype mode = fabs(2.5*M->data[i] - 1.5*mean->data[i]);
-                //register Imtype pixval = fabs(mode - I->data[i]);
-                if(pixval > std->data[i]) diff->data[i] = 100.;
-            }
-            save_fits(diff, "val_med.fits");
-            Image_free(&diff);
-        }else WARNX("Can't calculate statistics");
-        Image_free(&mean);
-        Image_free(&std);
-*/
-        Imtype bk;
-        if(calc_background(I, &bk)){
-            DBG("backgr = %g", bk);
-            DELTA("Got background");
-            //uint8_t *ibin = Im2bin(I, 1960.);
-            uint8_t *ibin = Im2bin(I, bk);
-            DELTA("Made binary");
-            if(ibin){
-                savebin(ibin, W, H, "binary.fits");
-                DELTA("save binary.fits");
-                ;
-                uint8_t *er = erosionN(ibin, W, H, GP->nerosions);
-                DELTA("Erosion");
-                savebin(er, W, H, "erosion.fits");
-                DELTA("Save erosion");
-                uint8_t *opn = dilationN(er, W, H, GP->ndilations);
-                FREE(er);
-                DELTA("Opening");
-                savebin(opn, W, H, "opening.fits");
-                DELTA("Save opening");
-                ConnComps *cc;
-                size_t *S = cclabel4(opn, W, H, &cc);
-                //double averW = 0., averH = 0.;
-                //green("Found %zd objects\n", cc->Nobj-1);
-                //printf("%6s\t%6s\t%6s\t%6s\t%6s\t%6s\t%6s\n", "N", "area", "w/h", "Xc", "Yc", "Xw", "Yw");
-                object *Objects = MALLOC(object, cc->Nobj-1);
-                int objctr = 0;
-                for(size_t i = 1; i < cc->Nobj; ++i){
-                    Box *b = &cc->boxes[i];
-                    //DBG("BOX %zd: area=%d, x:(%d-%d), y:(%d:%d)", i, b->area, b->xmin, b->xmax, b->ymin, b->ymax);
-                    double wh = ((double)b->xmax - b->xmin)/(b->ymax - b->ymin);
-                    if(wh < 0.77 || wh > 1.3) continue;
-                    if((int)b->area < GP->minarea) continue;
-                    double xc = 0., yc = 0.;
-                    double x2c = 0., y2c = 0., Isum = 0.;
-                    for(size_t y = b->ymin; y <= b->ymax; ++y){
-                        size_t idx = y*W + b->xmin;
-                        size_t *maskptr = &S[idx];
-                        Imtype *Iptr = &I->data[idx];
-                        for(size_t x = b->xmin; x <= b->xmax; ++x, ++maskptr, ++Iptr){
-                            //DBG("(%zd, %zd): %zd / %g", x, y, *maskptr, *Iptr);
-                            if(*maskptr != i) continue;
-                            double intens = (double) (*Iptr - bk);
-                            if(intens < 0.) continue;
-                            double xw = x * intens, yw = y * intens;
-                            xc += xw;
-                            yc += yw;
-                            x2c += xw * x;
-                            y2c += yw * y;
-                            Isum += intens;
-                        }
-                    }
-                    xc /= Isum; yc /= Isum;
-                    x2c = x2c/Isum - xc*xc;
-                    y2c = y2c/Isum - yc*yc;
-                    Objects[objctr++] = (object){
-                        .area = b->area, .Isum = Isum,
-                        .WdivH = wh, .xc = xc, .yc = yc,
-                        .xsigma = sqrt(x2c), .ysigma = sqrt(y2c)
-                    };
-                    ///object *o = &Objects[objctr-1];
-                    ///printf("%6d\t%6d\t%14.1f\t%6.1f\t%6.1f\t%6.1f\t%6.1f\t%6.1f\n", i, o->area, 40.-2.5*log(o->Isum), o->WdivH, o->xc, o->yc, o->xsigma, o->ysigma);
-                    //averH += y2c; averW += x2c;
-                }
-                DELTA("Labeling");
-                printf("%zd %d\n", time(NULL), objctr);
-                qsort(Objects, objctr, sizeof(object), compObjs);
-                object *o = Objects;
-                for(int i = 0; i < objctr; ++i, ++o){
-                    // 1.0857 = 2.5/ln(10)
-                    printf("%6d\t%6d\t%6.1f\t%6.1f\t%6.1f\t%6.1f\t%6.1f\t%6.1f\n", i, o->area, 20.-1.0857*log(o->Isum), o->WdivH, o->xc, o->yc, o->xsigma, o->ysigma);
-                }
-                FREE(cc);
-                FREE(Objects);
-                Image *c = ST2Im(S, W, H);
-                FREE(S);
-                DELTA("conv size_t -> Ima");
-                save_fits(c, "size_t.fits");
-                Image_free(&c);
-                DELTA("Save size_t");
-#if 0
-                uint8_t *f4 = filter8(ibin, W, H);
-                DELTA("calc f8");
-                savebin(f4, W, H, "f8.fits");
-                DELTA("save f8.fits");
-                uint8_t *e1 = erosion(ibin, W, H);
-                DELTA("Get e");
-                savebin(e1, W, H, "er.fits");
-                DELTA("Save er.fits");
-                uint8_t *e2 = dilation(ibin, W, H);
-                DELTA("Get di");
-                savebin(e2, W, H, "dil.fits");
-                DELTA("Save dil.fits");
-                FREE(e1);
-                FREE(e2);
-#endif
-#if 0
-                e1 = openingN(ibin, W, H, 1);
-                savebin(e1, W, H, "op.fits");
-                e2 = closingN(ibin, W, H, 1);
-                savebin(e2, W, H, "cl.fits");
-                FREE(e1);
-                FREE(e2);
-#endif
-                FREE(ibin);
-                FREE(opn);
-            }
-        }
-#ifdef GETMEDIAN
-        Image_free(&M);
-    }
-#endif
-    DELTA("End");
-    Image_free(&I);
-}
-
-static int process_input(InputType tp, char *name){
-    if(tp == T_DIRECTORY) return watch_directory(name, process_file);
-    return watch_file(name, process_file);
+    return itp;
 }
 
 int main(int argc, char *argv[]){
     initial_setup();
+    int cpunumber = sysconf(_SC_NPROCESSORS_ONLN);
+    if(omp_get_max_threads() != cpunumber)
+        omp_set_num_threads(cpunumber);
     char *self = strdup(argv[0]);
     GP = parse_args(argc, argv);
     if(GP->throwpart < 0. || GP->throwpart > 0.99){
         ERRX("Fraction of black pixels should be in [0., 0.99]");
     }
-    InputType tp = chk_inp(GP->inputname);
+    if(GP->Naveraging < 1 || GP->Naveraging > NAVER_MAX)
+        ERRX("Averaging amount should be from 1 to %d", NAVER_MAX);
+    tp = chk_inp(GP->inputname);
     if(tp == T_WRONG) ERRX("Enter correct image file or directory name");
-    check4running(self, GP->pidfile);
-    DBG("%s started, snippets library version is %s\n", self, sl_libversion());
-    free(self);
-    signal(SIGTERM, signals); // kill (-15) - quit
-    signal(SIGHUP, SIG_IGN);  // hup - ignore
-    signal(SIGINT, signals);  // ctrl+C - quit
-    signal(SIGQUIT, signals); // ctrl+\ - quit
-    signal(SIGTSTP, SIG_IGN); // ignore ctrl+Z
+    // check ability of saving file
+    {
+        FILE *f = fopen(GP->outputjpg, "w");
+        if(!f) ERR("Can't create %s", GP->outputjpg);
+        fclose(f);
+    }
     if(GP->logfile){
         sl_loglevel lvl = LOGLEVEL_ERR; // default log level - errors
         int v = GP->verb;
@@ -337,9 +140,94 @@ int main(int argc, char *argv[]){
         OPENLOG(GP->logfile, lvl, 1);
         DBG("Opened log file @ level %d", lvl);
     }
+    int C = chkconfig(GP->configname);
+    if(!C){
+        LOGWARN("Wrong/absent configuration file");
+        WARNX("Wrong/absent configuration file");
+    }
+    // change `theconf` parameters to user values
+    {
+        if(GP->maxarea != DEFAULT_MAXAREA || theconf.maxarea == 0) theconf.maxarea = GP->maxarea;
+        if(GP->minarea != DEFAULT_MINAREA || theconf.minarea == 0) theconf.minarea = GP->minarea;
+        if(GP->xtarget > 0.) theconf.xtarget = GP->xtarget;
+        if(GP->ytarget > 0.) theconf.ytarget = GP->ytarget;
+        if(GP->nerosions != DEFAULT_EROSIONS || theconf.Nerosions == 0){
+            if(GP->nerosions < 1 || GP->nerosions > MAX_NEROS) ERRX("Amount of erosions should be from 1 to %d", MAX_NEROS);
+            theconf.Nerosions = GP->nerosions;
+        }
+        if(GP->ndilations != DEFAULT_DILATIONS || theconf.Ndilations == 0){
+            if(GP->ndilations < 1 || GP->ndilations > MAX_NDILAT) ERRX("Amount of erosions should be from 1 to %d", MAX_NDILAT);
+            theconf.Ndilations = GP->ndilations;
+        }
+        if(fabs(GP->throwpart - DEFAULT_THROWPART) > DBL_EPSILON || theconf.throwpart < DBL_EPSILON){
+            if(GP->throwpart < 0. || GP->throwpart > MAX_THROWPART) ERRX("'thworpart' should be from 0 to %g", MAX_THROWPART);
+            theconf.throwpart = GP->throwpart;
+        }
+        if(GP->xoff && GP->xoff < MAX_OFFSET) theconf.xoff = GP->xoff;
+        if(GP->yoff && GP->yoff < MAX_OFFSET) theconf.yoff = GP->yoff;
+        if(GP->width && GP->width < MAX_OFFSET) theconf.width = GP->width;
+        if(GP->height && GP->height < MAX_OFFSET) theconf.height = GP->height;
+        if(fabs(GP->minexp - EXPOS_MIN) > DBL_EPSILON || theconf.minexp < DBL_EPSILON){
+            if(GP->minexp < DBL_EPSILON || GP->minexp > EXPOS_MAX) ERRX("Minimal exposition should be > 0 and < %g", EXPOS_MAX);
+            theconf.minexp = GP->minexp;
+        }
+        if(fabs(GP->maxexp - EXPOS_MAX) > DBL_EPSILON || theconf.maxexp < theconf.minexp){
+            if(GP->maxexp < theconf.minexp) ERRX("Maximal exposition should be greater than minimal");
+            theconf.maxexp = GP->maxexp;
+        }
+        if(GP->equalize && theconf.equalize == 0) theconf.equalize = 1;
+        if(fabs(GP->intensthres - DEFAULT_INTENSTHRES) > DBL_EPSILON){
+            if(GP->intensthres < DBL_EPSILON || GP->intensthres > 1.-DBL_EPSILON) ERRX("'intensthres' should be from 0 to 1");
+            theconf.intensthres = GP->intensthres;
+        }
+        if(GP->Naveraging != DEFAULT_NAVERAGE || theconf.naverage < 1){
+            if(GP->Naveraging < 1 || GP->Naveraging > NAVER_MAX) ERRX("N images for averaging should be from 1 to %d", NAVER_MAX);
+            theconf.naverage = GP->Naveraging;
+        }
+        if(GP->pusiservport != DEFAULT_PUSIPORT || theconf.stpserverport == 0){
+            if(GP->pusiservport < 1 || GP->pusiservport > 65535) ERRX("Wrong steppers' server port: %d", GP->pusiservport);
+            theconf.stpserverport = GP->pusiservport;
+        }
+    }
+    check4running(self, GP->pidfile);
+    DBG("%s started, snippets library version is %s\n", self, sl_libversion());
+    free(self); self = NULL;
+    signal(SIGTERM, signals); // kill (-15) - quit
+    signal(SIGHUP, SIG_IGN);  // hup - ignore
+    signal(SIGINT, signals);  // ctrl+C - quit
+    signal(SIGQUIT, signals); // ctrl+\ - quit
+    signal(SIGTSTP, SIG_IGN); // ignore ctrl+Z
+    while(1){ // guard for dead processes
+        childpid = fork();
+        if(childpid){ // father
+            LOGMSG("create child with PID %d\n", childpid);
+            DBG("Created child with PID %d\n", childpid);
+            wait(NULL);
+            LOGMSG("child %d died\n", childpid);
+            WARNX("Child %d died\n", childpid);
+            sleep(5);
+        }else{ // son
+            prctl(PR_SET_PDEATHSIG, SIGTERM); // send SIGTERM to child when parent dies
+            break; // go out to normal functional
+        }
+    }
+    setpostprocess(GP->processing);
+    if(GP->logXYname) openXYlog(GP->logXYname);
     LOGMSG("Start application...");
-    int p = process_input(tp, GP->inputname);
-    // never reached
-    signals(p); // clean everything
-    return p;
+    LOGDBG("xtag=%g, ytag=%g", theconf.xtarget, theconf.ytarget);
+    openIOport(GP->ioport);
+    pthread_t inp_thread;
+    if(pthread_create(&inp_thread, NULL, procinp_thread, NULL)){
+        LOGERR("pthread_create() for image input failed");
+        ERR("pthread_create()");
+    }
+    while(1){
+        if(stopwork || pthread_kill(inp_thread, 0) == ESRCH){
+            DBG("close");
+            pthread_join(inp_thread, NULL);
+            DBG("out");
+            return 0;
+        }
+    };
+    return 0;
 }

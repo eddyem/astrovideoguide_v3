@@ -27,6 +27,10 @@
 #define OMP_FOR(x) _Pragma(Stringify(omp parallel for x))
 #endif
 
+#ifdef THREAD_NUMBER
+#define OMP_NUM_THREADS THREAD_NUMBER
+#endif
+
 typedef uint8_t Imtype; // maybe float or double only
 
 typedef struct{

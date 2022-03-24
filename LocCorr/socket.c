@@ -219,14 +219,14 @@ static char *processCommand(const char msg[BUFLEN], char *ans, int anslen){
  */
 static size_t send_data(int sock, const char *textbuf){
     ssize_t Len = strlen(textbuf);
-    if(Len != write(sock, textbuf, Len)){
+    if(Len != send(sock, textbuf, Len, MSG_NOSIGNAL)){
         WARN("write()");
         LOGERR("send_data(): write() failed");
         return 0;
     }else{
         LOGDBG("send_data(): sent '%s'", textbuf);
     }
-    if(textbuf[Len-1] != '\n') Len += write(sock, "\n", 1);
+    if(textbuf[Len-1] != '\n') Len += send(sock, "\n", 1, MSG_NOSIGNAL);
     return (size_t)Len;
 }
 

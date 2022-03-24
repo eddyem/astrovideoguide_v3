@@ -16,6 +16,10 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+#ifdef OMP_FOUND
+#include <omp.h>
+#endif
+
 #include <math.h>
 #include <pthread.h>
 #include <signal.h>         // signal
@@ -112,6 +116,11 @@ static InputType chk_inp(const char *name){
 
 int main(int argc, char *argv[]){
     initial_setup();
+#ifdef OMP_FOUND
+    int cpunumber = sysconf(_SC_NPROCESSORS_ONLN);
+    if(omp_get_max_threads() != cpunumber)
+        omp_set_num_threads(cpunumber);
+#endif
     char *self = strdup(argv[0]);
     GP = parse_args(argc, argv);
     if(GP->throwpart < 0. || GP->throwpart > 0.99){
