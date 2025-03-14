@@ -84,6 +84,21 @@ static void XYnewline(){
     fflush(fXYlog);
 }
 
+// add comment string to XY log; @return FALSE if failed (file not exists)
+int XYcomment(char *cmnt){
+    if(!fXYlog || !cmnt) return FALSE;
+    if(*cmnt == '"'){
+        ++cmnt;
+        char *e = strrchr(cmnt, '"');
+        if(e) *e = 0;
+    }
+    char *n = strrchr(cmnt, '\n');
+    if(n) *n = 0;
+    fprintf(fXYlog, "# %s\n", cmnt);
+    fflush(fXYlog);
+    return TRUE;
+}
+
 static void getDeviation(object *curobj){
     int averflag = 0;
     static double Xc[NAVER_MAX+1], Yc[NAVER_MAX+1];
@@ -92,8 +107,8 @@ static void getDeviation(object *curobj){
     static int counter = 0;
     Xc[counter] = curobj->xc; Yc[counter] = curobj->yc;
     if(fXYlog){ // make log record
-        fprintf(fXYlog, "%.2f\t%.1f\t%.1f\t%.1f\t%.1f\t%.1f\t",
-                dtime(), curobj->xc, curobj->yc,
+        fprintf(fXYlog, "%-14.2f\t%.1f\t%.1f\t%.1f\t%.1f\t%.1f\t",
+                dtime() - tstart, curobj->xc, curobj->yc,
                 curobj->xsigma, curobj->ysigma, curobj->WdivH);
     }
     //DBG("counter = %d", counter);
@@ -118,11 +133,13 @@ static void getDeviation(object *curobj){
     averflag = 1;
     if(fXYlog) fprintf(fXYlog, "%.1f\t%.1f\t%.1f\t%.1f", xx, yy, Sx, Sy);
 process_corrections:
-    if(theSteppers && theSteppers->proc_corr && averflag){
-        if(Sx > XY_TOLERANCE || Sy > XY_TOLERANCE){
-            LOGDBG("Bad value - not process"); // don't run processing for bad data
-        }else
-            theSteppers->proc_corr(xx, yy);
+    if(theSteppers){
+        if(theSteppers->proc_corr && averflag){
+            if(Sx > XY_TOLERANCE || Sy > XY_TOLERANCE){
+                LOGDBG("Bad value - not process"); // don't run processing for bad data
+            }else
+                theSteppers->proc_corr(xx, yy);
+        }
     }else{
         LOGERR("Lost connection with stepper server");
         ERRX("Lost connection with stepper server");
@@ -130,16 +147,71 @@ process_corrections:
     XYnewline();
 }
 
+typedef struct{ // statistics: mean and RMS
+    float xc; float yc; float xsigma; float ysigma;
+} ptstat_t;
+
+/**
+ * @brief sumAndStat - calculate statistics in region of interest
+ * @param I - image (with background calculated)
+ * @param mask - labeled mask for objects (or NULL)
+ * @param idx - index on labeled mask
+ * @param roi - region of interest
+ * @param stat - (region - bacground) statistics
+ * @return total intensity sum
+ */
+static float sumAndStat(const Image *I, const size_t *mask, size_t idx, const il_Box *roi, ptstat_t *stat){
+    if(!I || !roi) return -1.;
+    //FNAME();
+    float xc = 0., yc = 0.;
+    float x2c = 0., y2c = 0., Isum = 0.;
+    int W = I->width;
+    //DBG("imw=%d, roi=%d:%d:%d:%d", W, roi->xmin, roi->xmax, roi->ymin, roi->ymax);
+    // dumb calculation as paralleling could be much slower
+    for(int y = roi->ymin; y <= roi->ymax; ++y){
+        size_t istart = y*W + roi->xmin;
+        //DBG("istart=%zd", istart);
+        const size_t *maskptr = (mask) ? &mask[istart] : NULL;
+        //DBG("mask %s NULL", mask ? "!=":"==");
+        Imtype *Iptr = &I->data[istart];
+        for(int x = roi->xmin; x <= roi->xmax; ++x, ++Iptr){
+            if(maskptr){if(*maskptr++ != idx) continue;}
+            if(*Iptr <= I->background) continue;
+            float intens = (float)(*Iptr - I->background);
+            float xw = x * intens, yw = y * intens;
+            xc += xw;
+            yc += yw;
+            x2c += xw * x;
+            y2c += yw * y;
+            Isum += intens;
+        }
+    }
+    if(stat && Isum > 0.){
+        stat->xc = xc / Isum;
+        stat->yc = yc / Isum;
+        stat->xsigma = x2c/Isum - stat->xc*stat->xc;
+        stat->ysigma = y2c/Isum - stat->yc*stat->yc;
+    }
+    //DBG("xc=%g, yc=%g, xs=%g, ys=%g", stat->xc, stat->yc, stat->xsigma, stat->ysigma);
+    return Isum;
+}
+
+#define MAX(a, b)   ((a) > (b) ? (a) : (b))
+#define MIN(a, b)   ((a) < (b) ? (a) : (b))
+
 void process_file(Image *I){
     static double lastTproc = 0.;
-/*
+    static int prev_x = -1, prev_y = -1;
+    static object *Objects = NULL;
+    static size_t Nallocated = 0;
+    il_ConnComps *cc = NULL;
+    size_t *S = NULL;
 #ifdef EBUG
     double t0 = dtime(), tlast = t0;
 #define DELTA(p) do{double t = dtime(); DBG("---> %s @ %gms (delta: %gms)", p, (t-t0)*1e3, (t-tlast)*1e3); tlast = t;}while(0)
 #else
-*/
 #define DELTA(x)
-//#endif
+#endif
     // I - original image
     // mean - local mean
     // std  - local STD
@@ -152,11 +224,52 @@ void process_file(Image *I){
     int W = I->width, H = I->height;
     //save_fits(I, "fitsout.fits");
     //DELTA("Save original");
-    Imtype bk;
-    if(calc_background(I, &bk)){
-        DBG("backgr = %d", bk);
+    if(calc_background(I)){
+        DBG("backgr = %d", I->background);
         DELTA("Got background");
-        uint8_t *ibin = Im2bin(I, bk);
+        int objctr = 0;
+        if(prev_x > 0 && prev_y > 0){
+            // Define ROI bounds
+            il_Box roi = {.xmin = MAX(prev_x - ROI_SIZE/2, 0),
+                          .xmax = MIN(prev_x + ROI_SIZE/2, W-1),
+                          .ymin = MAX(prev_y - ROI_SIZE/2, 0),
+                          .ymax = MIN(prev_y + ROI_SIZE/2, H-1)};
+            ptstat_t stat;
+            // Calculate centroid within ROI
+            DBG("Get sum and stat for simplest centroid");
+            double sum = sumAndStat(I, NULL, 0, &roi, &stat);
+            if(sum > 0.){
+                if( fabsf(stat.xc - prev_x) > XY_TOLERANCE ||
+                    fabsf(stat.yc - prev_y) > XY_TOLERANCE){
+                    DBG("Bad: was x=%d, y=%d; become x=%g, y=%g ==> need fine calculations", prev_x, prev_y, xc, yc);
+                }else{
+                    double WdH = stat.xsigma/stat.ysigma;
+                    // wery approximate area inside sigmax*sigmay
+                    double area = .4 * stat.xsigma * stat.ysigma;
+                    if(!isnan(WdH) && !isinf(WdH) && // if W/H is a number
+                        WdH > theconf.minwh && WdH < theconf.maxwh && // if W/H near circle
+                        area > theconf.minarea && area < theconf.maxarea){ // if star area is in range
+                        prev_x = (int)stat.xc;
+                        prev_y = (int)stat.yc;
+                        DBG("Simplest centroid, Xc=%g, Yc=%g", stat.xc, stat.yc);
+                        objctr = 1;
+                        if(!Objects){
+                            Objects = (object*)malloc(sizeof(object));
+                            Nallocated = 1;
+                        }
+                        Objects[0] = (object){
+                            .area = area, .Isum = sum,
+                            .WdivH = WdH, .xc = stat.xc, .yc = stat.yc,
+                            .xsigma = stat.xsigma, .ysigma = stat.ysigma
+                        };
+                        goto SKIP_FULL_PROCESS; // Skip full image processing
+                    }else{
+                        DBG("BAD image: WdH=%g, area=%g, xsigma=%g, ysigma=%g", WdH, area, stat.xsigma, stat.ysigma);
+                    }
+                }
+            }
+        }
+        uint8_t *ibin = Im2bin(I, I->background);
         DELTA("Made binary");
         if(ibin){
             //savebin(ibin, W, H, "binary.fits");
@@ -171,54 +284,46 @@ void process_file(Image *I){
             DELTA("Opening");
             //savebin(opn, W, H, "opening.fits");
             //DELTA("Save opening");
-            il_ConnComps *cc = NULL;
-            size_t *S = il_cclabel4(opn, W, H, &cc);
+            S = il_cclabel4(opn, W, H, &cc);
             FREE(opn);
-            if(cc->Nobj > 1){ // Nobj = amount of objects + 1
-                DBGLOG("Nobj=%d", cc->Nobj-1);
-                object *Objects = MALLOC(object, cc->Nobj-1);
-                int objctr = 0;
+            DBG("Nobj=%zd", cc->Nobj-1);
+            if(S && cc && cc->Nobj > 1){ // Nobj = amount of objects + 1
+                DBGLOG("Nobj=%zd", cc->Nobj-1);
+                if(Nallocated < cc->Nobj-1){
+                    Nallocated = cc->Nobj-1;
+                    Objects = realloc(Objects, Nallocated*sizeof(object));
+                }
                 for(size_t i = 1; i < cc->Nobj; ++i){
                     il_Box *b = &cc->boxes[i];
                     double wh = ((double)b->xmax - b->xmin)/(b->ymax - b->ymin);
                     //DBG("Obj# %zd: wh=%g, area=%d", i, wh, b->area);
                     if(wh < theconf.minwh || wh > theconf.maxwh) continue;
                     if((int)b->area < theconf.minarea || (int)b->area > theconf.maxarea) continue;
-                    double xc = 0., yc = 0.;
-                    double x2c = 0., y2c = 0., Isum = 0.;
-                    for(size_t y = b->ymin; y <= b->ymax; ++y){
-                        size_t idx = y*W + b->xmin;
-                        size_t *maskptr = &S[idx];
-                        Imtype *Iptr = &I->data[idx];
-                        for(size_t x = b->xmin; x <= b->xmax; ++x, ++maskptr, ++Iptr){
-                            if(*maskptr != i) continue;
-                            double intens = (double) (*Iptr - bk);
-                            if(intens < 0.) continue;
-                            double xw = x * intens, yw = y * intens;
-                            xc += xw;
-                            yc += yw;
-                            x2c += xw * x;
-                            y2c += yw * y;
-                            Isum += intens;
+                    ptstat_t stat;
+                    DBG("Get sum and stat");
+                    double sum = sumAndStat(I, &S[i], i, b, &stat);
+                    if(sum > 0.){
+                        if(cc->Nobj == 2){
+                            prev_x = (int)stat.xc, prev_y = (int)stat.yc;
                         }
+                        Objects[objctr++] = (object){
+                            .area = b->area, .Isum = sum,
+                            .WdivH = wh, .xc = stat.xc, .yc = stat.yc,
+                            .xsigma = stat.xsigma, .ysigma = stat.ysigma
+                        };
                     }
-                    xc /= Isum; yc /= Isum;
-                    x2c = x2c/Isum - xc*xc;
-                    y2c = y2c/Isum - yc*yc;
-                    Objects[objctr++] = (object){
-                        .area = b->area, .Isum = Isum,
-                        .WdivH = wh, .xc = xc, .yc = yc,
-                        .xsigma = sqrt(x2c), .ysigma = sqrt(y2c)
-                    };
                 }
                 DELTA("Labeling");
-                DBGLOG("T%.2f, N=%d\n", dtime(), objctr);
                 if(objctr > 1){
+                    prev_x = -1, prev_y = -1; // don't allow simple gravcenter for a lots of objects
                     if(theconf.starssort)
                         qsort(Objects, objctr, sizeof(object), compIntens);
                     else
                         qsort(Objects, objctr, sizeof(object), compDist);
                 }
+SKIP_FULL_PROCESS:
+                DBGLOG("T%.2f, N=%d\n", dtime(), objctr);
+                DELTA("Calculate deviations");
                 if(objctr){
 #ifdef EBUG
                     object *o = Objects;
@@ -233,6 +338,7 @@ void process_file(Image *I){
 #endif
                     getDeviation(Objects); // calculate dX/dY and process corrections
                 }
+                DELTA("prepare image");
                 { // prepare image and save jpeg
                     uint8_t *outp = NULL;
                     if(theconf.equalize)
@@ -243,6 +349,7 @@ void process_file(Image *I){
                     if(!cross) cross = il_Pattern_xcross(33, 33);
                     if(!crossL) crossL = il_Pattern_xcross(51, 51);
                     il_Img3 i3 = {.data = outp, .w = I->width, .h = H};
+                    DELTA("Draw crosses");
                     // draw fiber center position
                     il_Pattern_draw3(&i3, crossL, theconf.xtarget-theconf.xoff, H-(theconf.ytarget-theconf.yoff), C_R);
                     if(objctr){ // draw crosses @ objects' centers
@@ -256,7 +363,7 @@ void process_file(Image *I){
                         for(int i = 1; i < objctr; ++i)
                             il_Pattern_draw3(&i3, cross, Objects[i].xc, H-Objects[i].yc, C_B);
                     }else{xc = -1.; yc = -1.;}
-                    char *tmpnm = MALLOC(char, strlen(GP->outputjpg) + 5);
+                    char tmpnm[FILENAME_MAX+5];
                     sprintf(tmpnm, "%s-tmp", GP->outputjpg);
                     if(stbi_write_jpg(tmpnm, I->width, I->height, 3, outp, 95)){
                         if(rename(tmpnm, GP->outputjpg)){
@@ -264,10 +371,9 @@ void process_file(Image *I){
                             LOGWARN("can't save %s", GP->outputjpg);
                         }
                     }
-                    FREE(tmpnm);
+                    DELTA("Written");
                     FREE(outp);
                 }
-                FREE(Objects);
             }else{
                 xc = -1.; yc = -1.;
                 Image_write_jpg(I, GP->outputjpg, theconf.equalize);
@@ -333,7 +439,7 @@ void openXYlog(const char *name){
     }
     time_t t = time(NULL);
     fprintf(fXYlog, "# Start at: %s", ctime(&t));
-    fprintf(fXYlog, "# time Xc\tYc\t\tSx\tSy\tW/H\taverX\taverY\tSX\tSY\n");
+    fprintf(fXYlog, "# time\t\tXc\tYc\tSx\tSy\tW/H\taverX\taverY\tSX\tSY\n");
     fflush(fXYlog);
     tstart = dtime();
 }

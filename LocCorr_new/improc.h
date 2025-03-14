@@ -25,6 +25,7 @@
 
 // tolerance of deviations by X and Y axis (if sigmaX or sigmaY greater, values considered to be wrong)
 #define XY_TOLERANCE                (5.)
+#define ROI_SIZE                    (200)
 
 extern volatile atomic_bool stopwork;
 extern volatile atomic_ullong ImNumber;
@@ -35,6 +36,7 @@ void process_file(Image *I);
 int  process_input(InputType tp, char *name);
 void openXYlog(const char *name);
 void closeXYlog();
+int XYcomment(char *cmnt);
 double getFramesPerS();
 void getcenter(float *x, float *y);
 

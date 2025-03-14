@@ -116,6 +116,15 @@ int main(int argc, char *argv[]){
     initial_setup();
     char *self = strdup(argv[0]);
     GP = parse_args(argc, argv);
+    if(!chkconfig(GP->configname)){
+        LOGWARN("Wrong/absent configuration file");
+        WARNX("Wrong/absent configuration file");
+        if(GP->chkconf) return 1;
+    }
+    if(GP->chkconf){
+        printf("File %s OK\n", GP->configname);
+        return 0;
+    }
     if(GP->throwpart < 0. || GP->throwpart > 0.99){
         ERRX("Fraction of black pixels should be in [0., 0.99]");
     }
@@ -137,11 +146,6 @@ int main(int argc, char *argv[]){
         }
         OPENLOG(GP->logfile, lvl, 1);
         DBG("Opened log file @ level %d", lvl);
-    }
-    int C = chkconfig(GP->configname);
-    if(!C){
-        LOGWARN("Wrong/absent configuration file");
-        WARNX("Wrong/absent configuration file");
     }
     // change `theconf` parameters to user values
     {

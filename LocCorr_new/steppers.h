@@ -21,6 +21,9 @@
 // set state to `disconnect` after this amount of errors in `moving_finished`
 #define MAX_ERR_CTR     (15)
 
+// max time interval from previous correction to clear integral/time (seconds)
+#define MAX_PID_TIME    (5.)
+
 // amount of ALL motors
 #define NMOTORS (8)
 

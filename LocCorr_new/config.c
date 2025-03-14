@@ -51,6 +51,12 @@ configuration theconf = {
     .Kyu=0,
     .Kxv=0,
     .Kyv=0,
+    .PIDU_P = PID_P_DEFAULT,
+    .PIDU_I = PID_I_DEFAULT,
+    .PIDU_D = PID_D_DEFAULT,
+    .PIDV_P = PID_P_DEFAULT,
+    .PIDV_I = PID_I_DEFAULT,
+    .PIDV_D = PID_D_DEFAULT,
     .xtarget=-1,
     .ytarget=-1,
     .throwpart=DEFAULT_THROWPART,
@@ -61,6 +67,12 @@ configuration theconf = {
     .intensthres=DEFAULT_INTENSTHRES,
     .medseed=MIN_MEDIAN_SEED,
 };
+
+static int isSorted = 0; // ==1 when `parvals` are sorted
+static int compConfVals(const void *_1st, const void *_2nd){
+    const confparam *a = (confparam*)_1st, *b = (confparam*)_2nd;
+    return strcmp(a->name, b->name);
+}
 
 // {"", PAR_DOUBLE, (void*)&theconf., 0},
 static confparam parvals[] = {
@@ -116,6 +128,18 @@ static confparam parvals[] = {
      "X coordinate of target position"},
     {"ytarget", PAR_DOUBLE, (void*)&theconf.ytarget, 0, 1., MAX_OFFSET,
      "Y coordinate of target position"},
+    {"pidup", PAR_DOUBLE, (void*)&theconf.PIDU_P, 0, PID_P_MIN, PID_P_MAX,
+     "U axis P PID parameter"},
+    {"pidui", PAR_DOUBLE, (void*)&theconf.PIDU_I, 0, PID_I_MIN, PID_I_MAX,
+     "U axis I PID parameter"},
+    {"pidud", PAR_DOUBLE, (void*)&theconf.PIDU_D, 0, PID_I_MIN, PID_I_MAX,
+     "U axis D PID parameter"},
+    {"pidvp", PAR_DOUBLE, (void*)&theconf.PIDV_P, 0, PID_P_MIN, PID_P_MAX,
+     "V axis P PID parameter"},
+    {"pidvi", PAR_DOUBLE, (void*)&theconf.PIDV_I, 0, PID_I_MIN, PID_I_MAX,
+     "V axis I PID parameter"},
+    {"pidvd", PAR_DOUBLE, (void*)&theconf.PIDV_D, 0, PID_I_MIN, PID_I_MAX,
+     "V axis D PID parameter"},
     {"eqthrowpart", PAR_DOUBLE, (void*)&theconf.throwpart, 0, 0., MAX_THROWPART,
      "a part of low intensity pixels to throw away when histogram equalized"},
     {"minexp", PAR_DOUBLE, (void*)&theconf.minexp, 0, 0., EXPOS_MAX,
@@ -148,6 +172,10 @@ char *get_cmd_list(char *buff, int l){
     if(!buff || l < 1) return NULL;
     int L = l;
     char *ptr = buff;
+    if(!isSorted){
+        qsort(parvals, sizeof(parvals)/sizeof(confparam) - 1, sizeof(confparam), compConfVals);
+        isSorted = 1;
+    }
     confparam *par = parvals;
     while(L > 0 && par->name){
         int s = snprintf(ptr, L, "%s=newval - %s (from %g to %g)\n", par->name, par->help, par->minval, par->maxval);
@@ -161,10 +189,8 @@ char *get_cmd_list(char *buff, int l){
 static char *omitspaces(char *v){
     if(!v) return NULL;
     while(*v && (*v == ' ' || *v == '\t')) ++v;
-    char *ptr = strchr(v, ' ');
-    if(ptr) *ptr = 0;
-    ptr = strchr(v, '\t');
-    if(ptr) *ptr = 0;
+    int l = strlen(v);
+    while(l-- && (v[l] == ' ' || v[l] == '\t')) v[l] = 0;
     return v;
 }
 
@@ -173,12 +199,17 @@ static char *omitspaces(char *v){
 char *get_keyval(const char *pair, char value[128]){
     char key[128];
     char val[128];
-    if(!pair || !*pair) return strdup("#"); // empty line
+    //if(!pair || !*pair) return strdup("#"); // empty line
+    if(!pair || !*pair){
+        //DBG("Empty");
+        return NULL; // empty line
+    }
     char *keyptr = key, *valptr = val;
     int x = sscanf(pair, "%127[^=]=%127[^\n]%*c", key, val);
     //DBG("x=%d, key='%s', val='%s'", x, key, val);
     if(x < 0 || x > 2) return NULL; // wrong data or EOF
-    if(x == 0) return strdup("#"); // empty line
+    //if(x == 0) return strdup("#"); // empty line
+    if(x == 0) return NULL; // empty line
     keyptr = omitspaces(key);
     if(x == 2){ // param = value
         valptr = omitspaces(val);
@@ -187,7 +218,8 @@ char *get_keyval(const char *pair, char value[128]){
     }
     if(*keyptr == '#' || *keyptr == '%'){ // comment
         *value = 0;
-        return strdup("#");
+        //return strdup("#");
+        return NULL;
     }
     return NULL;
 }
@@ -219,6 +251,17 @@ static int str2int(int *num, const char *str){
     return TRUE;
 }
 
+// find configuration record for getter
+confparam *find_key(const char *key){
+    if(!key) return NULL;
+    confparam *par = parvals;
+    while(par->name){
+        if(strcmp(key, par->name) == 0) return par;
+        ++par;
+    }
+    return NULL;
+}
+
 /**
  * @brief chk_keyval - check key for presence in theconf and calculate its value
  * @param key (i) - keyword
@@ -228,39 +271,36 @@ static int str2int(int *num, const char *str){
  */
 confparam *chk_keyval(const char *key, const char *val, key_value *result){
     if(!key || !val || !result) return NULL;
-    confparam *par = parvals;
-    while(par->name){
-        if(strcmp(key, par->name) == 0){
-            //DBG("key='%s', par->name='%s'", key, par->name);
-            result->type = par->type;
-            switch(par->type){
-                case PAR_INT:
-                    //DBG("INTEGER");
-                    if(!str2int(&result->val.intval, val)){
-                        WARNX("Wrong integer value '%s' of parameter '%s'", val, key);
-                        return NULL;
-                    }
-                    if(result->val.intval < par->minval || result->val.intval > par->maxval)
-                        WARNX("Value (%d) of parameter %s out of range %g..%g",
-                               result->val.intval, par->name, par->minval, par->maxval);
-                    else return par;
-                break;
-                case PAR_DOUBLE:
-                    //DBG("DOUBLE");
-                    if(!str2double(&result->val.dblval, val)){
-                        WARNX("Wrong double value '%s' of parameter '%s'", val, key);
-                        return NULL;
-                    }
-                    //DBG("val: %g, min: %g, max: %g", result->val.dblval, par->minval, par->maxval);
-                    if(result->val.dblval < par->minval || result->val.dblval > par->maxval)
-                        WARNX("Value (%g) of parameter %s out of range %g..%g",
-                               result->val.dblval, par->name, par->minval, par->maxval);
-                    else return par;
-                break;
+    confparam *par = find_key(key);
+    if(!par) return NULL;
+    //DBG("key='%s', par->name='%s'", key, par->name);
+    result->type = par->type;
+    switch(par->type){
+        case PAR_INT:
+            //DBG("INTEGER");
+            if(!str2int(&result->val.intval, val)){
+                WARNX("Wrong integer value '%s' of parameter '%s'", val, key);
+                return NULL;
             }
-            return NULL;
-        }
-        ++par;
+            if(result->val.intval < par->minval || result->val.intval > par->maxval){
+                WARNX("Value (%d) of parameter %s out of range %g..%g",
+                       result->val.intval, par->name, par->minval, par->maxval);
+                break;
+            } else return par;
+        break;
+        case PAR_DOUBLE:
+            //DBG("DOUBLE");
+            if(!str2double(&result->val.dblval, val)){
+                WARNX("Wrong double value '%s' of parameter '%s'", val, key);
+                return NULL;
+            }
+            //DBG("val: %g, min: %g, max: %g", result->val.dblval, par->minval, par->maxval);
+            if(result->val.dblval < par->minval || result->val.dblval > par->maxval){
+                WARNX("Value (%g) of parameter %s out of range %g..%g",
+                       result->val.dblval, par->name, par->minval, par->maxval);
+                break;
+            } else return par;
+        break;
     }
     return NULL;
 }
@@ -352,6 +392,10 @@ int saveconf(const char *confname){
         LOGERR("Can't open %s to store configuration", confname);
         return FALSE;
     }
+    if(!isSorted){
+        qsort(parvals, sizeof(parvals)/sizeof(confparam) - 1, sizeof(confparam), compConfVals);
+        isSorted = 1;
+    }
     confparam *par = parvals;
     while(par->name){
         par->got = 1;
@@ -377,6 +421,10 @@ int saveconf(const char *confname){
 char *listconf(const char *messageid, char *buf, int buflen){
     int L;
     char *ptr = buf;
+    if(!isSorted){
+        qsort(parvals, sizeof(parvals)/sizeof(confparam) - 1, sizeof(confparam), compConfVals);
+        isSorted = 1;
+    }
     confparam *par = parvals;
     L = snprintf(ptr, buflen, "{ \"%s\": \"%s\", ", MESSAGEID, messageid);
     buflen -= L; ptr += L;

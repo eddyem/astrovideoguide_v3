@@ -27,7 +27,10 @@
 #define OMP_FOR(x) _Pragma(Stringify(omp parallel for x))
 #endif
 
-typedef uint8_t Imtype; // maybe float or double only
+typedef uint8_t Imtype;
+// 65536 if Imtype is uint16_t
+// WARNING! Check code if you change Imtype: e.g. recalcexp() and other
+#define HISTOSZ (256)
 
 typedef struct{
     int width;			// width
@@ -35,6 +38,8 @@ typedef struct{
     Imtype *data;		// picture data
     Imtype minval;      // extremal data values
     Imtype maxval;
+    float avg_intensity;
+    Imtype background;  // background value
 } Image;
 
 // input file/directory type
@@ -60,8 +65,8 @@ Image *Image_new(int w, int h);
 Image *Image_sim(const Image *i);
 void Image_free(Image **I);
 int Image_write_jpg(const Image *I, const char *name, int equalize);
-size_t *get_histogram(const Image *I);
-int calc_background(const Image *img, Imtype *bk);
+int get_histogram(const Image *I, size_t histo[HISTOSZ]);
+int calc_background(Image *img);
 
 Image *u8toImage(const uint8_t *data, int width, int height, int stride);
 Image *bin2Im(const uint8_t *image, int W, int H);

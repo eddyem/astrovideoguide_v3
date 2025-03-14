@@ -137,7 +137,7 @@ InputType chkinput(const char *name){
  * @return Image structure (fully allocated, you can FREE(data) after it)
  */
 Image *u8toImage(const uint8_t *data, int width, int height, int stride){
-    FNAME();
+    //FNAME();
     Image *outp = Image_new(width, height);
     // flip image updown for FITS coordinate system
     OMP_FOR()
@@ -218,25 +218,26 @@ Image *Image_sim(const Image *i){
 /**
  * @brief get_histogram - calculate image histogram
  * @param I - orig
- * @return
+ * @param histo - histogram
+ * @return FALSE if failed
  */
-size_t *get_histogram(const Image *I){
-    if(!I || !I->data) return NULL;
-    size_t *histogram = MALLOC(size_t, 256);
+int get_histogram(const Image *I, size_t histo[HISTOSZ]){
+    if(!I || !I->data || !histo) return FALSE;
+    bzero(histo, HISTOSZ*sizeof(size_t));
     int wh = I->width * I->height;
 #pragma omp parallel
 {
-    size_t histogram_private[256] = {0};
+    size_t histogram_private[HISTOSZ] = {0};
     #pragma omp for nowait
     for(int i = 0; i < wh; ++i){
         ++histogram_private[I->data[i]];
     }
     #pragma omp critical
     {
-        for(int i = 0; i < 256; ++i) histogram[i] += histogram_private[i];
+        for(int i = 0; i < HISTOSZ; ++i) histo[i] += histogram_private[i];
     }
 }
-    return histogram;
+    return TRUE;
 }
 
 
@@ -246,21 +247,22 @@ size_t *get_histogram(const Image *I){
  * @param bk (o)  - background value
  * @return 0 if error
  */
-int calc_background(const Image *img, Imtype *bk){
-    if(!img || !img->data || !bk) return FALSE;
+int calc_background(Image *img){
+    if(!img || !img->data) return FALSE;
     if(img->maxval == img->minval){
         WARNX("Zero or overilluminated image!");
         return FALSE;
     }
     if(theconf.fixedbkg){
-        if(theconf.fixedbkg > img->minval){
+        if(theconf.fixedbkg < img->minval){
             WARNX("Image values too small");
             return FALSE;
         }
-        *bk = theconf.fixedbkg;
+        img->background = theconf.fixedbkg;
         return TRUE;
     }
-    size_t *histogram = get_histogram(img);
+    size_t histogram[HISTOSZ];
+    if(!get_histogram(img, histogram)) return FALSE;
 
     size_t modeidx = 0, modeval = 0;
     for(int i = 0; i < 256; ++i)
@@ -273,7 +275,6 @@ int calc_background(const Image *img, Imtype *bk){
     for(int i = 2; i < 254; ++i) diff2[i] = (histogram[i+2]+histogram[i-2]-2*histogram[i])/4;
     //green("HISTO:\n");
     //for(int i = 0; i < 256; ++i) printf("%d:\t%d\t%d\n", i, histogram[i], diff2[i]);
-    FREE(histogram);
     if(modeidx < 2) modeidx = 2;
     if(modeidx > 253){
         WARNX("Overilluminated image");
@@ -287,7 +288,7 @@ int calc_background(const Image *img, Imtype *bk){
     }
     //DBG("borderidx=%d -> %d", borderidx, (borderidx+modeidx)/2);
     //*bk = (borderidx + modeidx) / 2;
-    *bk = borderidx;
+    img->background = borderidx;
     return TRUE;
 }
 
@@ -300,6 +301,7 @@ int calc_background(const Image *img, Imtype *bk){
  */
 uint8_t *linear(const Image *I, int nchannels){ // only 1 and 3 channels supported!
     if(!I || !I->data || (nchannels != 1 && nchannels != 3)) return NULL;
+    FNAME();
     int width = I->width, height = I->height;
     size_t stride = width*nchannels, S = height*stride;
     uint8_t *outp = MALLOC(uint8_t, S);
@@ -337,10 +339,11 @@ uint8_t *linear(const Image *I, int nchannels){ // only 1 and 3 channels support
  */
 uint8_t *equalize(const Image *I, int nchannels, double throwpart){
     if(!I || !I->data || (nchannels != 1 && nchannels != 3)) return NULL;
+    FNAME();
     int width = I->width, height = I->height;
     size_t stride = width*nchannels, S = height*stride;
-    size_t *orig_histo = get_histogram(I); // original hystogram (linear)
-    if(!orig_histo) return NULL;
+    size_t orig_histo[HISTOSZ]; // original hystogram (linear)
+    if(!get_histogram(I, orig_histo)) return NULL;
     uint8_t *outp = MALLOC(uint8_t, S);
     uint8_t eq_levls[256] = {0};   // levels to convert: newpix = eq_levls[oldpix]
     int s = width*height;
@@ -388,7 +391,6 @@ uint8_t *equalize(const Image *I, int nchannels, double throwpart){
             }
         }
     }
-    FREE(orig_histo);
     return outp;
 }
 
@@ -426,28 +428,33 @@ int Image_write_jpg(const Image *I, const char *name, int eq){
 void Image_minmax(Image *I){
     if(!I || !I->data) return;
     Imtype min = *(I->data), max = min;
+    float isum = 0.f;
     int wh = I->width * I->height;
 #ifdef EBUG
-    double t0 = dtime();
+    //double t0 = dtime();
 #endif
-    #pragma omp parallel shared(min, max)
+    #pragma omp parallel shared(min, max, isum)
     {
         int min_p = min, max_p = min;
+        float sum_p = 0.f;
         #pragma omp for nowait
         for(int i = 0; i < wh; ++i){
             Imtype pixval = I->data[i];
             if(pixval < min_p) min_p = pixval;
             else if(pixval > max_p) max_p = pixval;
+            sum_p += (float) pixval;
         }
         #pragma omp critical
         {
             if(min > min_p) min = min_p;
             if(max < max_p) max = max_p;
+            isum += sum_p;
         }
     }
     I->maxval = max;
     I->minval = min;
-    DBG("Image_minmax(): Min=%d, Max=%d, time: %gms", min, max, (dtime()-t0)*1e3);
+    I->avg_intensity = isum / (float)wh;
+    DBG("Image_minmax(): Min=%d, Max=%d, Isum=%g, mean=%g", min, max, isum, I->avg_intensity);
 }
 
 /*

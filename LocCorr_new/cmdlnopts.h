@@ -54,6 +54,7 @@ typedef struct{
     int steppersport;       // port of local motors CAN server
     int equalize;           // make historam equalization of saved jpeg
 //    int medradius;          // radius of median filter (r=1 -> 3x3, r=2 -> 5x5 etc.)
+    int chkconf;            // check config file
     int verb;               // logfile verbosity level
     int ndilations;         // amount of erosions (default: 2)
     int nerosions;          // amount of dilations (default: 2)

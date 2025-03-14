@@ -216,14 +216,19 @@ static int connect(){
 }
 
 static Image *capture(){
-    FNAME();
+    //FNAME();
     static int toohot = FALSE;
     if(!isopened || !imgBuf) return NULL;
     float_values f;
+    static double t0 = 0.;
     if(!getFloat("DeviceTemperature", &f)) WARNX("Can't get temperature");
     else{
-        LOGDBG("Basler temperature: %.1f", f.val);
-        DBG("Temperature: %.1f", f.val);
+        double t = dtime();
+        if(t - t0 >= 30.){ // log T each 30 seconds
+            LOGMSG("Basler temperature: %.1f", f.val);
+            t0 = t;
+        }
+        //DBG("Temperature: %.1f", f.val);
         if(f.val > 80.){
             WARNX("Device too hot");
             if(!toohot){

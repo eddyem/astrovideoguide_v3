@@ -46,6 +46,14 @@
 // tolerance of coordinates coincidence (pix)
 #define COORDTOLERANCE      (0.5)
 
+// PID
+typedef struct {
+    double Kp, Ki, Kd;  // coefficients
+    double integral;    // intergal error accumulator
+    double prev_error;  // previous error value for D
+    double prev_time;   // and previous time
+} PIDController;
+
 typedef enum{
     STP_DISCONN,
     STP_RELAX,
@@ -53,7 +61,8 @@ typedef enum{
     STP_GOTOTHEMIDDLE,
     STP_FINDTARGET,
     STP_FIX,
-    STP_UNDEFINED
+    STP_UNDEFINED,
+    STP_STATE_AMOUNT
 } STPstate;
 
 typedef enum{
@@ -711,6 +720,31 @@ static int process_targetstage(double X, double Y){
 }
 
 /**
+ * @brief compute_pid - calculate PID responce for error
+ * @param pid - U/V PID parameters
+ * @param error - current error
+ * @param current_time - and current time
+ * @return PID-corrected responce
+ */
+static double compute_pid(PIDController *pid, double error, double current_time) {
+    double dt = current_time - pid->prev_time;
+    if(dt <= 0.) dt = 0.01; // Default to 10ms if time isn't tracked
+    // Integral term with anti-windup
+    pid->integral += error * dt;
+    // Clamp integral to ?1000 (adjust based on system limits)
+    if(pid->integral > 1000.) pid->integral = 1000.;
+    if(pid->integral < -1000.) pid->integral = -1000.;
+    // Derivative term (filtered)
+    double derivative = (error - pid->prev_error) / dt;
+    pid->prev_error = error;
+    pid->prev_time = current_time;
+    double pid_out = (pid->Kp * error) + (pid->Ki * pid->integral) + (pid->Kd * derivative);
+    LOGDBG("PID: error=%.2f, integral=%.2f, derivative=%.2f, output=%.2f",
+           error, pid->integral, derivative, pid_out);
+    return pid_out;
+}
+
+/**
  * @brief try2correct - try to correct position
  * @param dX - delta of X-coordinate in image space
  * @param dY - delta of Y-coordinate in image space
@@ -718,25 +752,46 @@ static int process_targetstage(double X, double Y){
  */
 static int try2correct(double dX, double dY){
     if(!relaxed(Ustepper) || !relaxed(Vstepper)) return FALSE;
+    // calculations: make Ki=0, Kd=0; increase Kp until oscillations;
+    // now Tu - osc period, Ku=Kp for oscillations; so:
+    // Kp = 0.6*Ku; Ki = 1.2*Ku/Tu; Kd = 0.075*Ku*Tu (Ziegler-Nichols)
+    static PIDController pidU = {0}, pidV = {0};
+    // refresh parameters from configuration
+    pidU.Kp = theconf.PIDU_P; pidU.Ki = theconf.PIDU_I; pidU.Kd = theconf.PIDU_D;
+    pidV.Kp = theconf.PIDV_P; pidV.Ki = theconf.PIDV_I; pidV.Kd = theconf.PIDV_D;
     double dU, dV;
+    double current_time = dtime();
+    if( current_time - pidU.prev_time > MAX_PID_TIME
+        || current_time - pidV.prev_time > MAX_PID_TIME){
+        LOGWARN("Too old PID time: have dt=%gs", current_time - pidU.prev_time);
+        pidU.prev_time = pidV.prev_time = current_time;
+        pidU.integral = pidV.integral = 0.;
+        return FALSE;
+    }
     // dU = KU*(dX*cosXU + dY*sinXU); dV = KV*(dX*cosXV + dY*sinXV)
-    dU = KCORR*(theconf.Kxu * dX + theconf.Kyu * dY);
-    dV = KCORR*(theconf.Kxv * dX + theconf.Kyv * dY);
-    int Unew = Uposition + (int)dU, Vnew = Vposition + (int)dV;
+    dU = theconf.Kxu * dX + theconf.Kyu * dY;
+    dV = theconf.Kxv * dX + theconf.Kyv * dY;
+    LOGDBG("dx/dy: %g/%g; dU/dV: %g/%g", dX, dY, dU, dV);
+    // Compute PID outputs
+    double pidU_out = compute_pid(&pidU, dU, current_time);
+    double pidV_out = compute_pid(&pidV, dV, current_time);
+    int usteps = (int)pidU_out, vsteps = (int)pidV_out;
+    int Unew = Uposition + usteps, Vnew = Vposition + vsteps;
     if(Unew > theconf.maxUpos || Unew < theconf.minUpos ||
        Vnew > theconf.maxVpos || Vnew < theconf.minVpos){
+        // Reset integral to prevent windup
+        pidU.integral = 0;
+        pidV.integral = 0;
         // TODO: here we should signal that the limit reached and move by telescope
         LOGWARN("Correction failed, curpos: %d, %d, should move to %d, %d",
                 Uposition, Vposition, Unew, Vnew);
         return FALSE;
     }
-    LOGDBG("try2correct(): move from (%d, %d) to (%d, %d) (abs: %d, %d), delta (%.1f, %.1f)",
-           Uposition, Vposition, Unew, Vnew, Uposition + (int)(dU/KCORR),
-           Vposition + (int)(dV/KCORR), dU, dV);
+    LOGDBG("try2correct(): move from (%d, %d) to (%d, %d), delta (%.1f, %.1f)",
+           Uposition, Vposition, Unew, Vnew, dU, dV);
     int ret = TRUE;
-    int usteps = (int)dU, vsteps = (int)dV;
     if(usteps) ret = nth_motor_setter(CMD_RELPOS, Ustepper, usteps);
-    if(ret && vsteps) ret = nth_motor_setter(CMD_RELPOS, Vstepper, vsteps);
+    if(vsteps) ret &= nth_motor_setter(CMD_RELPOS, Vstepper, vsteps);
     if(!ret) LOGWARN("Canserver: cant run corrections");
     return ret;
 }
@@ -854,32 +909,31 @@ static char *stp_status(const char *messageid, char *buf, int buflen){
     return buf;
 }
 
-typedef struct{
-    const char *str;
-    STPstate state;
-} strstate;
 // commands from client to change status
-static strstate stringstatuses[] = {
-    {"disconnect", STP_DISCONN},
-    {"relax", STP_RELAX},
-    {"setup", STP_SETUP},
-    {"middle", STP_GOTOTHEMIDDLE},
-    {"findtarget", STP_FINDTARGET},
-    {"fix", STP_FIX},
-    {NULL, 0}
+static const char* stringstatuses[STP_STATE_AMOUNT] = {
+    [STP_DISCONN] = "disconnect",
+    [STP_RELAX] = "relax",
+    [STP_SETUP] = "setup",
+    [STP_GOTOTHEMIDDLE] = "middle",
+    [STP_FINDTARGET] = "findtarget",
+    [STP_FIX] = "fix",
+    [STP_UNDEFINED] = "undefined"
 };
 
 // try to set new status (global variable stepstatus)
 static char *set_stpstatus(const char *newstatus, char *buf, int buflen){
+    if(!buf) return NULL;
+    if(!newstatus){ // getter
+        snprintf(buf, buflen, "%s", stringstatuses[state]);
+        return buf;
+    }
     // FNAME();
-    strstate *s = stringstatuses;
     STPstate newstate = STP_UNDEFINED;
-    while(s->str){
-        if(strcasecmp(s->str, newstatus) == 0){
-            newstate = s->state;
+    for(int i = 0; i < STP_UNDEFINED; ++i){
+        if(strcasecmp(stringstatuses[i], newstatus) == 0){
+            newstate = (STPstate)i;
             break;
         }
-        ++s;
     }
     if(newstate != STP_UNDEFINED){
         if(stp_setstate(newstate)){
@@ -892,12 +946,10 @@ static char *set_stpstatus(const char *newstatus, char *buf, int buflen){
     }
     int L = snprintf(buf, buflen, "status '%s' undefined, allow: ", newstatus);
     char *ptr = buf;
-    s = stringstatuses;
-    while(L > 0){
+    for(int i = 0; i < STP_UNDEFINED && buflen > 2; ++i){
         buflen -= L;
         ptr += L;
-        L = snprintf(ptr, buflen, "'%s' ", s->str);
-        if((++s)->str == NULL) break;
+        L = snprintf(ptr, buflen-2, "'%s' ", stringstatuses[i]);
     }
     ptr[L-1] = '\n';
     return buf;
@@ -947,7 +999,7 @@ static void *stp_process_states(_U_ void *arg){
             first = TRUE;
         }
         // if we are here, all U/V moving is finished
-        switch(state){ // STProbo state machine
+        switch(state){ // steppers state machine
             case STP_DISCONN:
                 if(!stp_connect_server()){
                     WARNX("Can't reconnect");
@@ -974,7 +1026,7 @@ static void *stp_process_states(_U_ void *arg){
             case STP_FIX: // process corrections
                 if(coordsRdy){
                     coordsRdy = FALSE;
-                    DBG("GET AVERAGE -> correct\n");
+                    DBG("GOT AVERAGE -> correct\n");
                     double xtg = theconf.xtarget - theconf.xoff, ytg = theconf.ytarget - theconf.yoff;
                     double xdev = xtg - Xtarget, ydev = ytg - Ytarget;
                     double corr = sqrt(xdev*xdev + ydev*ydev);
@@ -1003,6 +1055,11 @@ static void *stp_process_states(_U_ void *arg){
 
 // change focus (global variable movefocus)
 static char *set_pfocus(const char *newstatus, char *buf, int buflen){
+    if(!buf) return NULL;
+    if(!newstatus){ // getter
+        snprintf(buf, buflen, "%d", Fposition);
+        return buf;
+    }
     int newval = atoi(newstatus);
     if(newval < theconf.minFpos || newval > theconf.maxFpos){
         snprintf(buf, buflen, FAIL);
@@ -1017,6 +1074,11 @@ static char *set_pfocus(const char *newstatus, char *buf, int buflen){
 }
 // move by U and V axis
 static char *Umove(const char *val, char *buf, int buflen){
+    if(!buf) return NULL;
+    if(!val){ // getter
+        snprintf(buf, buflen, "%d", Uposition);
+        return buf;
+    }
     int d = atoi(val);
     int Unfixed = Uposition + d;
     if(Unfixed > theconf.maxUpos || Unfixed < theconf.minUpos){
@@ -1030,6 +1092,11 @@ static char *Umove(const char *val, char *buf, int buflen){
     return buf;
 }
 static char *Vmove(const char *val, char *buf, int buflen){
+    if(!buf) return NULL;
+    if(!val){ // getter
+        snprintf(buf, buflen, "%d", Vposition);
+        return buf;
+    }
     int d = atoi(val);
     int Vnfixed = Vposition + d;
     if(Vnfixed > theconf.maxVpos || Vnfixed < theconf.minVpos){

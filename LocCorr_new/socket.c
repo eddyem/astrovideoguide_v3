@@ -44,6 +44,8 @@
 // Max amount of connections
 #define BACKLOG     (10)
 
+static pthread_mutex_t cmd_mutex = PTHREAD_MUTEX_INITIALIZER;
+
 /*
 TODO3: add 'FAIL error text' if not OK and instead all "wrong message"
 */
@@ -67,9 +69,9 @@ static char *stepperstatus(const char *messageid, char *buf, int buflen);
 static char *getimagedata(const char *messageid, char *buf, int buflen);
 static getter getterHandlers[] = {
     {"help", helpmsg, "List avaiable commands"},
+    {"imdata", getimagedata, "Get image data (status, path, FPS, counter)"},
     {"settings", listconf, "List current configuration"},
     {"stpserv", stepperstatus, "Get status of steppers server"},
-    {"imdata", getimagedata, "Get image data (status, path, FPS, counter)"},
     {NULL, NULL, NULL}
 };
 
@@ -77,12 +79,14 @@ static char *setstepperstate(const char *state, char *buf, int buflen);
 static char *setfocusstate(const char *state, char *buf, int buflen);
 static char *moveU(const char *val, char *buf, int buflen);
 static char *moveV(const char *val, char *buf, int buflen);
+static char *addcmnt(const char *cmnt, char *buf, int buflen);
 
 static setter setterHandlers[] = {
-    {"stpstate", setstepperstate, "Set given steppers' server state"},
+    {"comment", addcmnt, "Add comment to XY log file"},
     {"focus", setfocusstate, "Move focus to given value"},
     {"moveU", moveU, "Relative moving by U axe"},
     {"moveV", moveV, "Relative moving by V axe"},
+    {"stpstate", setstepperstate, "Set given steppers' server state"},
     {NULL, NULL, NULL}
 };
 
@@ -90,6 +94,11 @@ static char *retFAIL(char *buf, int buflen){
     snprintf(buf, buflen, FAIL);
     return buf;
 }
+static char *retOK(char *buf, int buflen){
+    snprintf(buf, buflen, OK);
+    return buf;
+}
+
 
 /**************** functions to process commands ****************/
 // getters
@@ -143,6 +152,13 @@ static char *moveV(const char *val, char *buf, int buflen){
     if(theSteppers && theSteppers->moveByV) return theSteppers->moveByV(val, buf, buflen);
     return retFAIL(buf, buflen);
 }
+static char *addcmnt(const char *cmnt, char *buf, int buflen){
+    if(!cmnt) return retFAIL(buf, buflen);
+    char *line = strdup(cmnt);
+    int ret = XYcomment(line);
+    free(line);
+    return ret ? retOK(buf, buflen) : retFAIL(buf, buflen) ;
+}
 
 /*
 static char *rmnl(const char *msg, char *buf, int buflen){
@@ -162,14 +178,15 @@ static char *rmnl(const char *msg, char *buf, int buflen){
  */
 static char *processCommand(const char msg[BUFLEN], char *ans, int anslen){
     char value[BUFLEN];
-    char *kv = get_keyval(msg, value);
+    char *kv = get_keyval(msg, value); // ==NULL for getters/commands without equal sign
+    DBG("message: %s, value: %s, key: %s", msg, value, kv);
     confparam *par;
     if(kv){
         DBG("got KEY '%s' with value '%s'", kv, value);
         key_value result;
         par = chk_keyval(kv, value, &result);
-        free(kv); kv = NULL;
-        if(par){
+        if(par){ // configuration parameter
+            DBG("found this key in conf");
             switch(par->type){
                 case PAR_INT:
                     DBG("FOUND! Integer, old=%d, new=%d", *((int*)par->ptr), result.val.intval);
@@ -181,27 +198,67 @@ static char *processCommand(const char msg[BUFLEN], char *ans, int anslen){
                 break;
                 default:
                     snprintf(ans, anslen, FAIL);
+                    free(kv);
                     return ans;
             }
             snprintf(ans, anslen, OK);
+            free(kv);
             return ans;
         }else{
+            DBG("check common setters");
             setter *s = setterHandlers;
             while(s->command){
-                int l = strlen(s->command);
-                if(strncasecmp(msg, s->command, l) == 0)
+                //int l = strlen(s->command);
+                //if(strncasecmp(msg, s->command, l) == 0)
+                DBG("check '%s' == '%s' ?", kv, s->command);
+                if(strcmp(kv, s->command) == 0){
+                    free(kv);
                     return s->handler(value, ans, anslen);
+                }
                 ++s;
             }
         }
+        free(kv);
     }else{
+        DBG("getter?");
+        // first check custom getters
         getter *g = getterHandlers;
         while(g->command){
-            int l = strlen(g->command);
-            if(strncasecmp(msg, g->command, l) == 0)
+            //int l = strlen(g->command);
+            //if(strncasecmp(msg, g->command, l) == 0)
+            if(0 == strcmp(msg, g->command))
                 return g->handler(g->command, ans, anslen);
             ++g;
         }
+        DBG("not found in getterHandlers");
+        // check custom setters
+        setter *s = setterHandlers;
+        while(s->command){
+            if(strcmp(msg, s->command) == 0){
+                size_t p = snprintf(ans, anslen, "%s=", msg);
+                s->handler(NULL, ans+p, anslen-p);
+                return ans;
+            }
+            ++s;
+        }
+        DBG("not found in setterHandlers");
+        // and check configuration parameters
+        confparam *par = find_key(msg);
+        if(par){
+            switch(par->type){
+                case PAR_INT:
+                    snprintf(ans, anslen, "%s=%d", msg, *((int*)par->ptr));
+                break;
+                case PAR_DOUBLE:
+                    snprintf(ans, anslen, "%s=%g",  msg, *((double*)par->ptr));
+                break;
+                default:
+                    snprintf(ans, anslen, FAIL);
+                break;
+            }
+            return ans;
+        }
+        DBG("not found in parameters");
     }
     snprintf(ans, anslen, FAIL);
     return ans;
@@ -215,16 +272,24 @@ static char *processCommand(const char msg[BUFLEN], char *ans, int anslen){
  * @return amount of sent bytes
  */
 static size_t send_data(int sock, const char *textbuf){
-    ssize_t Len = strlen(textbuf);
-    if(Len != write(sock, textbuf, Len)){
-        WARN("write()");
-        LOGERR("send_data(): write() failed");
-        return 0;
-    }else{
-        LOGDBG("send_data(): sent '%s'", textbuf);
+    size_t total = 0;
+    size_t len = strlen(textbuf);
+    const char *ptr = textbuf;
+    while(total < len){
+        ssize_t sent = write(sock, ptr + total, len - total);
+        if(sent < 0){
+            if(errno == EINTR) continue;
+            LOGERR("Write error: %s", strerror(errno));
+            return total;
+        }
+        total += sent;
     }
-    if(textbuf[Len-1] != '\n') Len += write(sock, "\n", 1);
-    return (size_t)Len;
+    if(textbuf[len-1] != '\n'){
+        if(write(sock, "\n", 1) != 1){
+            LOGERR("Failed to write newline");
+        }
+    }
+    return total;
 }
 
 /**
@@ -233,7 +298,7 @@ static size_t send_data(int sock, const char *textbuf){
  * @return 0 if all OK, 1 if socket closed
  */
 static int handle_socket(int sock){
-    FNAME();
+    //FNAME();
     char buff[BUFLEN];
     char ansbuff[ANSBUFLEN];
     ssize_t rd = read(sock, buff, BUFLEN-1);
@@ -243,17 +308,29 @@ static int handle_socket(int sock){
     }
     // add trailing zero to be on the safe side
     buff[rd] = 0;
+    char *eol = strchr(buff, '\n');
+    if(eol) *eol = 0; // clear '\n'
     // now we should check what do user want
     // here we can process user data
     DBG("user %d send '%s'", sock, buff);
     LOGDBG("user %d send '%s'", sock, buff);
-    //pthread_mutex_lock(&mutex);
+    pthread_mutex_lock(&cmd_mutex);
     char *ans = processCommand(buff, ansbuff, ANSBUFLEN-1); // run command parser
     if(ans){
         send_data(sock, ans);   // send answer
     }
-    //pthread_mutex_unlock(&mutex);
+    pthread_mutex_unlock(&cmd_mutex);
     return 0;
+}
+
+// shutdown client and close
+static void cleanup_client(int fd) {
+    if(fd > 0) {
+        shutdown(fd, SHUT_RDWR);
+        close(fd);
+        DBG("Client with fd %d closed", fd);
+        LOGMSG("Client %d disconnected", fd);
+    }
 }
 
 // main socket server
@@ -273,9 +350,16 @@ static void *server(void *asock){
     while(1){
         if(stopwork){
             DBG("server() exit @ global stop");
+            LOGDBG("server() exit @ global stop");
             return NULL;
         }
-        poll(poll_set, nfd, 1); // poll for 1ms
+        int ready = poll(poll_set, nfd, 1); // 1ms timeout
+        if(ready < 0){
+            if(errno == EINTR) continue;
+            LOGERR("Poll error: %s", strerror(errno));
+            return NULL;
+        }
+        if(0 == ready) continue;
         for(int fdidx = 0; fdidx < nfd; ++fdidx){ // poll opened FDs
             if((poll_set[fdidx].revents & POLLIN) == 0) continue;
             poll_set[fdidx].revents = 0;
@@ -284,9 +368,7 @@ static void *server(void *asock){
                 //int nread = 0;
                 //ioctl(fd, FIONREAD, &nread);
                 if(handle_socket(fd)){ // socket closed - remove it from list
-                    close(fd);
-                    DBG("Client with fd %d closed", fd);
-                    LOGMSG("Client %d disconnected", fd);
+                    cleanup_client(fd);
                     // move last to free space
                     poll_set[fdidx] = poll_set[nfd - 1];
                     --nfd;
@@ -319,6 +401,8 @@ static void *server(void *asock){
             }
         } // endfor
     }
+    // disconnect all
+    for(int i = 1; i < nfd; ++i) cleanup_client(poll_set[i].fd);
     LOGERR("server(): UNREACHABLE CODE REACHED!");
 }
 

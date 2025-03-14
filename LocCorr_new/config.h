@@ -46,7 +46,7 @@
 #define KUVMIN           (-5000.)
 #define KUVMAX           (5000.)
 // default coefficient for corrections (move to Kdu, Kdv instead of du, dv)
-#define KCORR           (0.90)
+//#define KCORR           (0.90)
 // min/max median seed
 #define MIN_MEDIAN_SEED (1)
 #define MAX_MEDIAN_SEED (7)
@@ -61,6 +61,17 @@
 // roundness parameter
 #define MINWH                       (0.3)
 #define MAXWH                       (3.)
+
+// PID limits
+#define PID_P_MIN       (0.1)
+#define PID_P_MAX       (3.)
+#define PID_P_DEFAULT   (0.7)
+#define PID_I_MIN       (0.)
+#define PID_I_MAX       (3.)
+#define PID_I_DEFAULT   (0.1)
+#define PID_D_MIN       (0.)
+#define PID_D_MAX       (5.)
+#define PID_D_DEFAULT   (0.05)
 
 // messageID field name
 #define MESSAGEID       "messageid"
@@ -102,6 +113,9 @@ typedef struct{
     double gain;        // gain value in manual mode
     double brightness;  // brightness @camera
     double intensthres; // threshold for stars intensity comparison: fabs(Ia-Ib)/(Ia+Ib) > thres -> stars differs
+    // PID regulator for axes U and V
+    double PIDU_P; double PIDU_I; double PIDU_D;
+    double PIDV_P; double PIDV_I; double PIDV_D;
 } configuration;
 
 typedef enum{
@@ -135,6 +149,7 @@ int chkconfig(const char *confname);
 int saveconf(const char *confname);
 char *get_keyval(const char *pair, char value[128]);
 confparam *chk_keyval(const char *key, const char *val, key_value *result);
+confparam *find_key(const char *key);
 char *listconf(const char *messageid, char *buf, int buflen);
 
 #endif // CONFIG_H__

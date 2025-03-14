@@ -18,6 +18,7 @@
 
 #include <float.h> // FLT_EPSILON
 #include <math.h>
+#include <pthread.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -122,6 +123,9 @@ static void calcexpgain(float newexp){
 
 //convertedImage.pData, convertedImage.cols, convertedImage.rows, convertedImage.stride
 static void recalcexp(Image *I){
+#ifdef EBUG
+    green("RECALCEXP\n"); fflush(stdout);
+#endif
     // check if user changed exposition values
     if(exptime < theconf.minexp){
         exptime = theconf.minexp;
@@ -131,28 +135,103 @@ static void recalcexp(Image *I){
         exptime = theconf.maxexp;
         return;
     }
-    size_t *histogram = get_histogram(I);
-    if(!histogram){
+    size_t histogram[HISTOSZ];
+    if(!get_histogram(I, histogram)){
         WARNX("Can't calculate histogram");
         return;
     }
     int idx100;
     size_t sum100 = 0;
-    for(idx100 = 255; idx100 >= 0; --idx100){
+    for(idx100 = HISTOSZ-1; idx100 >= 0; --idx100){
         sum100 += histogram[idx100];
         if(sum100 > 100) break;
     }
-    FREE(histogram);
     DBG("Sum100=%zd, idx100=%d", sum100, idx100);
-    if(idx100 > 230 && idx100 < 253) return; // good values
+    if(idx100 > 230 && idx100 < 253){
+        DBG("idx100=%d - good", idx100);
+        return; // good values
+    }
     if(idx100 > 253){ // exposure too long
+        DBG("Exp too long");
         calcexpgain(0.7*exptime);
     }else{ // exposure too short
-        if(idx100 > 5)
+        if(idx100 > 5){
+            DBG("Exp too short");
             calcexpgain(exptime * 230. / (float)idx100);
-        else
+        }else{
+            DBG("divide exp by 2");
             calcexpgain(exptime * 50.);
+        }
     }
+}
+
+static int needs_exposure_adjustment(const Image *I, float curr_x, float curr_y) {
+    static float last_avg_intensity = -1.f;
+    static float last_centroid_x = -1.f, last_centroid_y = -1.f;
+    float avg = I->avg_intensity;
+    float dx = fabsf(curr_x - last_centroid_x);
+    float dy = fabsf(curr_y - last_centroid_y);
+    // Adjust if intensity changes >10% or centroid moves >20px or no x/y centroids
+    if(curr_x < 0.f || curr_y < 0.f) return TRUE;
+    if(fabsf(avg - last_avg_intensity) > 0.1f * last_avg_intensity ||
+        dx > 20.f || dy > 20.f){
+        DBG("avg_cur=%g, avg_last=%g, dx=%g, dy=%g", avg, last_avg_intensity, dx, dy);
+        last_avg_intensity = avg;
+        last_centroid_x = curr_x;
+        last_centroid_y = curr_y;
+        return TRUE;
+    }
+    return FALSE;
+}
+
+static pthread_mutex_t capt_mutex = PTHREAD_MUTEX_INITIALIZER;
+static int iCaptured = -1; // index of last captured image
+static Image* Icap[2] = {0}; // buffer for last captured images
+// main capture thread fills empty buffers and wait until processed thread free's one of them
+static void *procthread(void* v){
+    typedef void (*procfn_t)(Image*);
+    void (*process)(Image*) = (procfn_t)v;
+#ifdef EBUG
+    double t0 = dtime();
+#endif
+    while(!stopwork){
+        while(iCaptured < 0) usleep(1000);
+        pthread_mutex_lock(&capt_mutex);
+        if(Icap[iCaptured]){
+            DBG("---- got image #%d @ %g", iCaptured, dtime() - t0);
+            Image *oIma = Icap[iCaptured]; // take image here and free buffer
+            Icap[iCaptured] = NULL;
+            pthread_mutex_unlock(&capt_mutex);
+            if(theconf.expmethod == EXPAUTO){
+                float xc, yc;
+                getcenter(&xc, &yc);
+                if(needs_exposure_adjustment(oIma, xc, yc)) recalcexp(oIma);
+            }else{
+                if(fabs(theconf.fixedexp - exptime) > FLT_EPSILON)
+                    exptime = theconf.fixedexp;
+                if(fabs(theconf.gain - gain) > FLT_EPSILON)
+                    gain = theconf.gain;
+                if(fabs(theconf.brightness - brightness) > FLT_EPSILON)
+                    brightness = theconf.brightness;
+            }
+            if(process){
+                if(theconf.medfilt){
+                    Image *X = get_median(oIma, theconf.medseed);
+                    if(X){
+                        FREE(oIma->data);
+                        FREE(oIma);
+                        oIma = X;
+                    }
+                }
+                process(oIma);
+            }
+            FREE(oIma->data);
+            FREE(oIma);
+            DBG("---- cleared image data @ %g", dtime() - t0);
+        }else pthread_mutex_unlock(&capt_mutex);
+        usleep(1000);
+    }
+    return NULL;
 }
 
 int camcapture(void (*process)(Image*)){
@@ -161,6 +240,11 @@ int camcapture(void (*process)(Image*)){
     static float oldgain = -1.;
     static float oldbrightness = -1.;
     Image *oIma = NULL;
+    pthread_t proc_thread;
+    if(pthread_create(&proc_thread, NULL, procthread, (void*)process)){
+        LOGERR("pthread_create() for image processing failed");
+        ERR("pthread_create()");
+    }
     while(1){
         if(stopwork){
             DBG("STOP");
@@ -213,35 +297,37 @@ int camcapture(void (*process)(Image*)){
             camdisconnect();
             continue;
         }
-        if(theconf.expmethod == EXPAUTO) recalcexp(oIma);
-        else{
-            if(fabs(theconf.fixedexp - exptime) > FLT_EPSILON)
-                exptime = theconf.fixedexp;
-            if(fabs(theconf.gain - gain) > FLT_EPSILON)
-                gain = theconf.gain;
-            if(fabs(theconf.brightness - brightness) > FLT_EPSILON)
-                brightness = theconf.brightness;
+        pthread_mutex_lock(&capt_mutex);
+        if(iCaptured < 0) iCaptured = 0;
+        else iCaptured = !iCaptured;
+        if(Icap[iCaptured]){ // try current value if previous is still busy
+            iCaptured = !iCaptured;
         }
-        if(process){
-            if(theconf.medfilt){
-                Image *X = get_median(oIma, theconf.medseed);
-                if(X){
-                    FREE(oIma->data);
-                    FREE(oIma);
-                    oIma = X;
-                }
-            }
-            process(oIma);
+        if(!Icap[iCaptured]){ // previous buffer is free
+            DBG("---- take iCaptured=%d", iCaptured);
+            Icap[iCaptured] = oIma;
+            oIma = NULL;
+        }else{ // clear our image - there's no empty buffers
+            DBG("---- no free buffers");
+            FREE(oIma->data);
+            FREE(oIma);
         }
-        FREE(oIma->data);
-        FREE(oIma);
+        pthread_mutex_unlock(&capt_mutex);
     }
+    pthread_cancel(proc_thread);
     if(oIma){
         FREE(oIma->data);
         FREE(oIma);
     }
+    for(int i = 0; i < 2; ++i){
+        if(Icap[i]){
+            FREE(Icap[i]->data);
+            FREE(Icap[i]);
+        }
+    }
     camdisconnect();
     DBG("CAMCAPTURE: out");
+    pthread_join(proc_thread, NULL);
     return 1;
 }
 
