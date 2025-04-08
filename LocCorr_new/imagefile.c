@@ -34,6 +34,7 @@
 #include "draw.h"
 #include "fits.h"
 #include "grasshopper.h"
+#include "hikrobot.h"
 #include "imagefile.h"
 #include "median.h"
 
@@ -103,8 +104,15 @@ static InputType imtype(FILE *f){
  */
 InputType chkinput(const char *name){
     DBG("input name: %s", name);
+#ifdef FLYCAP_FOUND
     if(0 == strcmp(name, GRASSHOPPER_CAPT_NAME)) return T_CAPT_GRASSHOPPER;
-    else if(0 == strcmp(name, BASLER_CAPT_NAME)) return T_CAPT_BASLER;
+#endif
+#ifdef BASLER_FOUND
+    if(0 == strcmp(name, BASLER_CAPT_NAME)) return T_CAPT_BASLER;
+#endif
+#ifdef MVS_FOUND
+    if(0 == strcmp(name, HIKROBOT_CAPT_NAME)) return T_CAPT_HIKROBOT;
+#endif
     struct stat fd_stat;
     stat(name, &fd_stat);
     if(S_ISDIR(fd_stat.st_mode)){

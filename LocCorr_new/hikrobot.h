@@ -1,6 +1,6 @@
 /*
  * This file is part of the loccorr project.
- * Copyright 2021 Edward V. Emelianov <edward.emelianoff@gmail.com>.
+ * Copyright 2025 Edward V. Emelianov <edward.emelianoff@gmail.com>.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -15,16 +15,13 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
+
 #pragma once
-#ifndef GRASSHOPPER_H__
-#define GRASSHOPPER_H__
 
-
-#ifdef FLYCAP_FOUND
+#ifdef MVS_FOUND
 #include "cameracapture.h" // `camera`
-#define GRASSHOPPER_CAPT_NAME   "grasshopper"
 
-extern camera GrassHopper;
+#define HIKROBOT_CAPT_NAME        "hikrobot"
+
+extern camera Hikrobot;
 #endif
-
-#endif // GRASSHOPPER_H__

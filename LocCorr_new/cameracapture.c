@@ -22,11 +22,10 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "cameracapture.h"
 #include "cmdlnopts.h"
 #include "config.h"
 #include "debug.h"
-#include "fits.h"
-#include "grasshopper.h"
 #include "imagefile.h"
 #include "improc.h"
 #include "median.h"
@@ -103,21 +102,38 @@ void camdisconnect(){
 
 static void calcexpgain(float newexp){
     DBG("recalculate exposition: oldexp=%g, oldgain=%g, newexp=%g", exptime, gain, newexp);
+    float newgain = gain;
+#if 0
     while(newexp*1.25 > theconf.minexp){ // increase gain first
-        if(gain < gainmax - 0.9999){
-            gain += 1.;
+        if(newgain < gainmax - 0.9999){
+            newgain += 1.;
             newexp /= 1.25;
         }else break;
     }
     while(newexp < theconf.minexp){
-        if(1.25*newexp < theconf.maxexp && gain > 0.9999){
-            gain -= 1.;
+        if(1.25*newexp < theconf.maxexp && newgain > 0.9999){
+            newgain -= 1.;
             newexp *= 1.25;
         }else break;
     }
+#endif
+    if(newexp > exptime){ // need to increase exptime - try to increase gain first
+        if(newgain < gainmax - 0.9999f){
+            newgain += 1.f;
+            newexp = exptime; // leave exptime unchanged
+        }else if(newgain < gainmax) newgain = gainmax;
+    }else{ // decrease -> decrease gain if exptime too small
+        if(newexp < theconf.minexp){
+            if(newgain > 1.f) newgain -= 1.f;
+            else newgain = 0.f;
+        }
+    }
+
     if(newexp < theconf.minexp) newexp = theconf.minexp;
     else if(newexp > theconf.maxexp) newexp = theconf.maxexp;
+    LOGDBG("recalc exp from %g to %g; gain from %g to %g", exptime, newexp, gain, newgain);
     exptime = newexp;
+    gain = newgain;
     DBG("New values: exp=%g, gain=%g", exptime, gain);
 }
 
@@ -129,15 +145,18 @@ static void recalcexp(Image *I){
     // check if user changed exposition values
     if(exptime < theconf.minexp){
         exptime = theconf.minexp;
+        LOGDBG("recalcexp(): minimal exptime");
         return;
     }
     else if(exptime > theconf.maxexp){
         exptime = theconf.maxexp;
+        LOGDBG("recalcexp(): maximal exptime");
         return;
     }
     size_t histogram[HISTOSZ];
     if(!get_histogram(I, histogram)){
         WARNX("Can't calculate histogram");
+        LOGWARN("recalcexp(): can't calculate histogram");
         return;
     }
     int idx100;
@@ -153,14 +172,14 @@ static void recalcexp(Image *I){
     }
     if(idx100 > 253){ // exposure too long
         DBG("Exp too long");
-        calcexpgain(0.7*exptime);
+        calcexpgain(exptime * 0.3f);
     }else{ // exposure too short
         if(idx100 > 5){
             DBG("Exp too short");
-            calcexpgain(exptime * 230. / (float)idx100);
+            calcexpgain(exptime * 230.f / (float)idx100);
         }else{
-            DBG("divide exp by 2");
-            calcexpgain(exptime * 50.);
+            DBG("increase exptime 50 times");
+            calcexpgain(exptime * 50.f);
         }
     }
 }
@@ -171,14 +190,31 @@ static int needs_exposure_adjustment(const Image *I, float curr_x, float curr_y)
     float avg = I->avg_intensity;
     float dx = fabsf(curr_x - last_centroid_x);
     float dy = fabsf(curr_y - last_centroid_y);
+    LOGDBG("avg: %g, curr_x: %g, curr_y: %g", avg, curr_x, curr_y);
+    // don't change brightness if average value in 5..50
+    if(avg > 5.f && avg < 50.f){
+        last_avg_intensity = avg;
+        return FALSE;
+    }
     // Adjust if intensity changes >10% or centroid moves >20px or no x/y centroids
-    if(curr_x < 0.f || curr_y < 0.f) return TRUE;
+    if(curr_x < 0.f || curr_y < 0.f){ // star wasn't detected
+        int ret = FALSE;
+        if(fabsf(avg - last_avg_intensity) > 0.1f * last_avg_intensity ||
+            avg < 0.001f || avg > 200.f){
+            LOGDBG("Need adj: image too bad");
+            ret = TRUE;
+        }
+        last_avg_intensity = avg;
+        return ret;
+    }
     if(fabsf(avg - last_avg_intensity) > 0.1f * last_avg_intensity ||
         dx > 20.f || dy > 20.f){
         DBG("avg_cur=%g, avg_last=%g, dx=%g, dy=%g", avg, last_avg_intensity, dx, dy);
+        LOGDBG("avg_cur=%g, avg_last=%g, dx=%g, dy=%g", avg, last_avg_intensity, dx, dy);
         last_avg_intensity = avg;
         last_centroid_x = curr_x;
         last_centroid_y = curr_y;
+        LOGDBG("Need adj: changed conditions");
         return TRUE;
     }
     return FALSE;

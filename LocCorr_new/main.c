@@ -104,8 +104,11 @@ static InputType chk_inp(const char *name){
         case T_CAPT_BASLER:
             printf("capture basler camera");
         break;
+        case T_CAPT_HIKROBOT:
+            printf("hikrobot camera capture");
+        break;
         default:
-            printf("Unsupported type\n");
+            printf("unsupported type\n");
             return T_WRONG;
     }
     printf("\n");
@@ -215,7 +218,7 @@ int main(int argc, char *argv[]){
     }
     if(!(theSteppers = steppers_connect())){
         LOGERR("Steppers server unavailable, can't run");
-        ERRX("Steppers server unavailable, can't run");
+        WARNX("Steppers server unavailable, can't run");
     }
     if(GP->logXYname) openXYlog(GP->logXYname);
     LOGMSG("Start application...");

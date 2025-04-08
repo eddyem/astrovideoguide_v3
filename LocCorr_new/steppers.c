@@ -203,7 +203,7 @@ static void stp_disconnect(){
     }
     state = STP_DISCONN;
     sockfd = -1;
-    LOGWARN("Canserver disconnected");
+    LOGWARN("Stepper server disconnected");
 }
 
 // check if nmot is U/V/F and return FALSE if not
@@ -1129,7 +1129,8 @@ steppersproc* steppers_connect(){
     if(!stp_connect_server()) return NULL;
     if(pthread_create(&processingthread, NULL, stp_process_states, NULL)){
         LOGERR("pthread_create() for steppers server failed");
-        ERR("pthread_create()");
+        WARNX("pthread_create()");
+        return NULL;
     }
     return &steppers;
 }

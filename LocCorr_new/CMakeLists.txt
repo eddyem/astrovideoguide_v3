@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.0)
+cmake_minimum_required(VERSION 3.20)
 set(PROJ loccorr)
 set(MINOR_VERSION "1")
 set(MID_VERSION "0")
@@ -6,9 +6,6 @@ set(MAJOR_VERSION "0")
 set(VERSION "${MAJOR_VERSION}.${MID_VERSION}.${MINOR_VERSION}")
 
 project(${PROJ} VERSION ${VERSION} LANGUAGES C)
-
-# default flags
-set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -std=gnu99")
 
 set(CMAKE_COLOR_MAKEFILE ON)
 
@@ -19,9 +16,12 @@ set(CMAKE_VERBOSE_MAKEFILE "ON")
 
 # list of options
 option(DEBUG "Compile in debug mode" OFF)
+option(BASLER "Add Basler cameras support" OFF)
+option(GRASSHOPPER "Add GrassHopper cameras support" OFF)
+option(HIKROBOT "Add HikRobot cameras support" OFF)
 
 # default flags
-set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -W -Wextra -std=gnu99")
+set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -W -Wextra")
 set(CMAKE_COLOR_MAKEFILE ON)
 
 # cmake -DDEBUG=yes -> debugging
@@ -45,9 +45,25 @@ set(MODULES usefull_macros cfitsio improc)
 # find packages:
 SET(CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR})
 find_package(PkgConfig REQUIRED)
-find_package(FLYCAP    REQUIRED)
-find_package(BASLER    REQUIRED)
-pkg_check_modules(${PROJ} REQUIRED ${MODULES})
+if(GRASSHOPPER)
+    find_package(FLYCAP REQUIRED)
+    add_definitions("-DFLYCAP_FOUND=1")
+else()
+    list(REMOVE_ITEM SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/grasshopper.c")
+endif()
+if(BASLER)
+    find_package(BASLER REQUIRED)
+    add_definitions("-DBASLER_FOUND=1")
+else()
+    list(REMOVE_ITEM SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/basler.c")
+endif()
+if(HIKROBOT)
+    pkg_check_modules(MVS REQUIRED mvs>=2.1)
+    add_definitions("-DMVS_FOUND=1")
+else()
+    list(REMOVE_ITEM SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/hikrobot.c")
+endif()
+pkg_check_modules(MODULES REQUIRED ${MODULES})
 
 include(FindOpenMP)
 if(OPENMP_FOUND)
@@ -73,9 +89,10 @@ message("Install dir prefix: ${CMAKE_INSTALL_PREFIX}")
 # exe file
 add_executable(${PROJ} ${SOURCES})
 # -I
-include_directories(${${PROJ}_INCLUDE_DIRS} ${FLYCAP_INCLUDE_DIRS} ${BASLER_INCLUDE_DIRS})
+target_include_directories(${PROJ} PUBLIC ${MODULES_INCLUDE_DIRS} ${FLYCAP_INCLUDE_DIRS} ${BASLER_INCLUDE_DIRS} ${MVS_INCLUDE_DIRS})
 # -L
-link_directories(${${PROJ}_LIBRARY_DIRS} ${FLYCAP_LIBRARY_DIRS} ${BASLER_LIBRARY_DIRS})
+target_link_directories(${PROJ} PUBLIC ${MODULES_LIBRARY_DIRS} ${FLYCAP_LIBRARY_DIRS} ${BASLER_LIBRARY_DIRS} ${MVS_LIBRARY_DIRS})
+message("MOD: ${MODULES_LIBRARY_DIRS}, FC: ${FLYCAP_LIBRARY_DIRS}, MVS: ${MVS_LIBRARY_DIRS}")
 # -D
 add_definitions(${CFLAGS} -DLOCALEDIR=\"${LOCALEDIR}\"
     -DPACKAGE_VERSION=\"${VERSION}\" -DGETTEXT_PACKAGE=\"${PROJ}\"
@@ -83,7 +100,7 @@ add_definitions(${CFLAGS} -DLOCALEDIR=\"${LOCALEDIR}\"
     -DMAJOR_VERSION=\"${MAJOR_VERSION}\" -DTHREAD_NUMBER=${PROCESSOR_COUNT})
 
 # -l
-target_link_libraries(${PROJ} ${${PROJ}_LIBRARIES} ${FLYCAP_LIBRARIES} ${BASLER_LIBRARIES} -lm)
+target_link_libraries(${PROJ} ${MODULES_LIBRARIES} ${FLYCAP_LIBRARIES} ${BASLER_LIBRARIES} ${MVS_LIBRARIES} -lm)
 
 # Installation of the program
 INSTALL(TARGETS ${PROJ} DESTINATION "bin")

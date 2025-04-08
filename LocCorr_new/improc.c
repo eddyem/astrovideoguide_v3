@@ -30,10 +30,9 @@
 #include "debug.h"
 #include "draw.h"
 #include "grasshopper.h"
-#include "fits.h"
+#include "hikrobot.h"
 #include "improc.h"
 #include "inotify.h"
-#include "median.h"
 #include "steppers.h"
 
 volatile atomic_ullong ImNumber = 0; // GLOBAL: counter of processed images
@@ -133,7 +132,9 @@ static void getDeviation(object *curobj){
     averflag = 1;
     if(fXYlog) fprintf(fXYlog, "%.1f\t%.1f\t%.1f\t%.1f", xx, yy, Sx, Sy);
 process_corrections:
+    LOGDBG("here");
     if(theSteppers){
+        DBG("Process corrections");
         if(theSteppers->proc_corr && averflag){
             if(Sx > XY_TOLERANCE || Sy > XY_TOLERANCE){
                 LOGDBG("Bad value - not process"); // don't run processing for bad data
@@ -142,8 +143,9 @@ process_corrections:
         }
     }else{
         LOGERR("Lost connection with stepper server");
-        ERRX("Lost connection with stepper server");
+        WARNX("Lost connection with stepper server");
     }
+    LOGDBG("And there");
     XYnewline();
 }
 
@@ -410,9 +412,26 @@ int process_input(InputType tp, char *name){
     if(tp == T_DIRECTORY){
         imagedata = watchdr;
         return watch_directory(name, process_file);
-    }else if(tp == T_CAPT_GRASSHOPPER || tp == T_CAPT_BASLER){
-        camera *cam = &GrassHopper;
-        if(tp == T_CAPT_BASLER) cam = &Basler;
+    }else if(tp == T_CAPT_GRASSHOPPER || tp == T_CAPT_BASLER || tp == T_CAPT_HIKROBOT){
+        camera *cam = NULL;
+        switch(tp){
+            case T_CAPT_GRASSHOPPER:
+#ifdef FLYCAP_FOUND
+                cam = &GrassHopper;
+#endif
+                break;
+            case T_CAPT_BASLER:
+#ifdef BASLER_FOUND
+                cam = &Basler;
+#endif
+                break;
+            case T_CAPT_HIKROBOT:
+#ifdef MVS_FOUND
+                cam = &Hikrobot;
+#endif
+                break;
+            default: return FALSE;
+        }
         if(!setCamera(cam)){
             WARNX("The camera disconnected");
             LOGWARN("The camera disconnected");

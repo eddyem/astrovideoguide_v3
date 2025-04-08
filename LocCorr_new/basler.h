@@ -19,9 +19,13 @@
 #ifndef BASLER_H__
 #define BASLER_H__
 
+
+#ifdef BASLER_FOUND
 #include "cameracapture.h" // `camera`
+
 #define BASLER_CAPT_NAME        "basler"
 
 extern camera Basler;
+#endif
 
 #endif // BASLER_H__
