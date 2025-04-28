@@ -94,7 +94,7 @@ static int changeenum(const char *key, uint32_t val){
     TRY(GetEnumValue, key, &e);
     ONERR() return FALSE;
     if(e.nCurValue == val) return TRUE;
-    WARNX("New value of '%s' changed to %d, not to %d", key, e.nCurValue, val);
+    WARNX("New ENUM value of '%s' changed to %d, not to %d", key, e.nCurValue, val);
     return FALSE;
 }
 
@@ -109,13 +109,13 @@ static int changeint(const char *key, uint32_t val){
     if(i.nCurValue == val) return TRUE;
     TRYERR(SetIntValue, key, val);
     ONERR(){
-        WARNX("Cant change %s to %u; available range is %u..%u", key, val, i.nMin, i.nMax);
+        WARNX("Can't change %s to %u; available range is %u..%u", key, val, i.nMin, i.nMax);
         return FALSE;
     }
     TRY(GetIntValue, key, &i);
     ONERR() return FALSE;
     if(i.nCurValue == val) return TRUE;
-    WARNX("New value of '%s' changed to %d, not to %d", key, i.nCurValue, val);
+    WARNX("New INT value of '%s' changed to %d, not to %d", key, i.nCurValue, val);
     return FALSE;
 }
 
@@ -135,8 +135,9 @@ static int changefloat(const char *key, float val){
     }
     TRY(GetFloatValue, key, &f);
     ONERR() return FALSE;
-    if(fabs(f.fCurValue - val) < __FLT_EPSILON__) return TRUE;
-    WARNX("New value of '%s' changed to %g, not to %g", key, f.fCurValue, val);
+    DBG("need: %g, have: %g (min/max: %g/%g)", val, f.fCurValue, f.fMin, f.fMax);
+    if(fabs(f.fCurValue - val) < HR_FLOAT_TOLERANCE) return TRUE;
+    WARNX("New FLOAT value of '%s' changed to %g, not to %g", key, f.fCurValue, val);
     return FALSE;
 }
 
@@ -166,8 +167,12 @@ static int cam_getbright(float *b){
     if(!handle) return FALSE;
     DBG("Get brightness");
     MVCC_INTVALUE bright;
-    TRY(GetIntValue, "Brightness", &bright);
-    ONERR() return FALSE;
+    //TRY(GetIntValue, "Brightness", &bright);
+    TRY(GetBrightness, &bright);
+    ONERR(){
+        DBG("There's no such function");
+        return FALSE;
+    }
     if(b) *b = bright.nCurValue;
     extrvalues.maxgain = bright.nMax;
     extrvalues.mingain = bright.nMin;
@@ -177,7 +182,10 @@ static int cam_getbright(float *b){
 
 static int cam_setbright(float b){
     if(!handle) return FALSE;
-    return changeint("Brightness", (uint32_t)b);
+    TRY(SetBrightness, (uint32_t)b);
+    ONERR() return FALSE;
+    return TRUE;
+    //return changeint("Brightness", (uint32_t)b);
 }
 
 static void cam_closecam(){

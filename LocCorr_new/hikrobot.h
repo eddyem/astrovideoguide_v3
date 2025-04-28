@@ -23,5 +23,8 @@
 
 #define HIKROBOT_CAPT_NAME        "hikrobot"
 
+// tolerance of float values
+#define HR_FLOAT_TOLERANCE  (0.005)
+
 extern camera Hikrobot;
 #endif

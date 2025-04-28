@@ -80,6 +80,7 @@ static _Atomic setupstatus sstatus = SETUP_NONE; // setup state
 
 //static int errctr = 0; // sending messages error counter (if > MAX_ERR_CTR, set state to disconnected)
 
+// common global variable for using in several sources (should be inited first)
 steppersproc *theSteppers = NULL;
 
 // stepper numbers
@@ -139,6 +140,10 @@ static const char* errtxt[ERR_AMOUNT] = {
     [ERR_CANTRUN] = "CANTRUN",
 };
 
+static atomic_int LastErr = ERR_OK;
+static sl_sock_t *serialsock = NULL;
+static pthread_t clientthread;
+
 static STPstate state = STP_DISCONN;   // server state
 // this flag set to TRUE when next Xc,Yc available
 static volatile atomic_bool coordsRdy = FALSE;
@@ -149,11 +154,9 @@ static double Xtarget = 0., Ytarget = 0.;
 static volatile atomic_bool chfocus = FALSE;
 static volatile atomic_int newfocpos = 0, dUmove = 0, dVmove = 0;
 
-static volatile atomic_int sockfd = -1; // server file descriptor
 static volatile atomic_bool motorsoff = FALSE; // flag to disconnect
 
-// mutex for message sending/receiving
-static pthread_mutex_t mesg_mutex = PTHREAD_MUTEX_INITIALIZER;
+
 
 // current steps counters (zero at the middle)
 static volatile atomic_int motposition[NMOTORS] = {0};
@@ -197,13 +200,17 @@ static void stp_disc(){
 
 static void stp_disconnect(){
     DBG("Try to disconnect");
-    if(sockfd > -1){
-        DBG("sockfd closed");
-        close(sockfd);
+    if(serialsock){
+        DBG("Close socket");
+        sl_sock_delete(&serialsock);
+        if(!pthread_cancel(clientthread)){
+            DBG("Join canceled thread");
+            pthread_join(clientthread, NULL);
+            DBG("OK");
+        }
+        LOGWARN("Stepper server disconnected");
     }
     state = STP_DISCONN;
-    sockfd = -1;
-    LOGWARN("Stepper server disconnected");
 }
 
 // check if nmot is U/V/F and return FALSE if not
@@ -212,87 +219,8 @@ static int chkNmot(int nmot){
     return FALSE;
 }
 
-/**
- * wait for answer from socket
- * @return FALSE in case of error or timeout, TRUE if socket is ready
- */
-static int canread(){
-    if(sockfd < 0) return FALSE;
-    fd_set fds;
-    struct timeval timeout;
-    int rc;
-    // wait not more than 10ms
-    timeout.tv_sec = 0;
-    timeout.tv_usec = 10000;
-    FD_ZERO(&fds);
-    FD_SET(sockfd, &fds);
-    do{
-        rc = select(sockfd+1, &fds, NULL, NULL, &timeout);
-        if(rc < 0){
-            if(errno != EINTR){
-                WARN("select()");
-                return FALSE;
-            }
-            continue;
-        }
-        break;
-    }while(1);
-    if(FD_ISSET(sockfd, &fds)){
-        //DBG("CANREAD");
-        return TRUE;
-    }
-    return FALSE;
-}
 
-// clear all data received earlier
-static void clrbuf(){
-    char buf[256];
-    while(canread()){
-        ssize_t got = recv(sockfd, buf, 256, 0);
-        DBG("cleared %zd bytes of trash", got);
-        if(got <= 0){ // disconnect or error
-            LOGERR("Server disconnected");
-            ERRX("Server disconnected");
-        }
-    }
-}
-
-// read message (if exists) and return its length (or -1 if none)
-// There's could be many strings of data!!!
-static ssize_t read_message(char *msg, size_t msglen){
-    if(!msg || msglen == 0) return -1;
-    if(pthread_mutex_lock(&mesg_mutex)){
-        WARN("pthread_mutex_lock()");
-        LOGWARN("read_message(): pthread_mutex_lock() err");
-        return 0;
-    }
-    double t0 = sl_dtime();
-    size_t gotbytes = 0;
-    --msglen; // for trailing zero
-    while(sl_dtime() - t0 < WAITANSTIME && gotbytes < msglen && sockfd > 0){
-        if(!canread()) continue;
-        int n = recv(sockfd, msg+gotbytes, msglen, 0);
-        if(n <= 0){ // disconnect or error
-            LOGERR("Server disconnected");
-            ERRX("Server disconnected");
-        }
-        if(n == 0) break;
-        gotbytes += n;
-        msglen -= n;
-        if(msg[gotbytes-1] == '\n') break;
-        t0 = sl_dtime();
-    }
-    //DBG("Dt=%g, gotbytes=%zd, sockfd=%d, msg='%s'", dtime()-t0,gotbytes,sockfd,msg);
-    pthread_mutex_unlock(&mesg_mutex);
-    if(msg[gotbytes-1] != '\n'){
-        //DBG("No newline at the end");
-        return 0;
-    }
-    msg[gotbytes] = 0;
-    return gotbytes;
-}
-
-static errcodes parsing(steppercmd idx, int nmot, int ival){
+static errcodes parser(steppercmd idx, int nmot, int ival){
     int goodidx = chkNmot(nmot);
     switch(idx){
         case CMD_ABSPOS:
@@ -337,57 +265,46 @@ static errcodes getecode(const char *msg){
 }
 
 /**
- * @brief read_parse - read answer (till got or WAITANSTIME timeout) and parse it
- * @param idx - index of message sent (to compare answer)
- * @return
+ * @brief parse_msg - parse last message
+ * @param msg - message received
  */
-static errcodes read_and_parse(steppercmd idx){
-    char value[128], msg[1024];
-    double t0 = sl_dtime();
-    while(sl_dtime() - t0 < WAITANSTIME*10.){
-        ssize_t got = read_message(msg, 1024);
-        if(got < 1) continue;
-        //LOGDBG("GOT from stepper server:\n%s\n", msg);
-        char *saveptr, *tok = msg;
-        for(;; tok = NULL){
-            char *token = strtok_r(tok, "\n", &saveptr);
-            if(!token) break;
-            //LOGDBG("Got line: %s", token);
-            char *key = get_keyval(token, value);
-            if(key){
-                int ival = atoi(value);
-                //LOGDBG("key = %s, value = %s (%d)", key, value, ival);
-                size_t l = strlen(key);
-                size_t numpos = strcspn(key, "0123456789");
-                int parno = -1;
-                if(numpos < l){
-                    parno = atoi(key + numpos);
-                    key[numpos] = 0;
-                }
-                //DBG("numpos=%zd, parno=%d", numpos, parno);
-                if(parno > -1){ // got motor number
-                    if(!chkNmot(parno)){
-                        DBG("Not our business");
-                        free(key); continue;
-                    }
-                }
-                // search index in commands
-                if(0 == strcmp(stp_commands[idx], key)){ // found our
-                    free(key);
-                    //LOGDBG("OK, idx=%d, cmd=%s", idx, stp_commands[idx]);
-                    return parsing(idx, parno, ival);
-                }
-                free(key);
-            }else{
-                DBG("GOT NON-setter %s", token);
-                errcodes e = getecode(token);
-                if(e != ERR_AMOUNT) return e; // ERR_AMOUNT means some other message
+static void parse_msg(char *msg){
+    char value[128];
+    if(!msg) return;
+    char *key = get_keyval(msg, value);
+    if(key){
+        int ival = atoi(value);
+        //LOGDBG("key = %s, value = %s (%d)", key, value, ival);
+        size_t l = strlen(key);
+        size_t numpos = strcspn(key, "0123456789");
+        int parno = -1;
+        if(numpos < l){
+            parno = atoi(key + numpos);
+            key[numpos] = 0;
+        }
+        //DBG("numpos=%zd, parno=%d", numpos, parno);
+        if(parno > -1){ // got motor number
+            if(!chkNmot(parno)){
+                DBG("Not our business");
+                free(key); return;
             }
         }
+        for(int idx = 0; idx < CMD_AMOUNT; ++idx){
+            // search index in commands
+            if(0 == strcmp(stp_commands[idx], key)){ // found our
+                free(key);
+                //LOGDBG("OK, idx=%d, cmd=%s", idx, stp_commands[idx]);
+                parser(idx, parno, ival);
+                break;
+            }
+        }
+        free(key);
+        return;
+    }else{
+        DBG("GOT NON-setter %s", msg);
+        errcodes e = getecode(msg);
+        if(e != ERR_AMOUNT) LastErr = e; // for checking
     }
-    DBG("No answer detected to our command");
-    LOGDBG("read_and_parse(): no answer detected to our command");
-    return ERR_CANTRUN; // didn't get anwer need
 }
 
 /**
@@ -397,26 +314,23 @@ static errcodes read_and_parse(steppercmd idx){
  */
 static errcodes send_message(steppercmd idx, char *msg){
     // FNAME();
-    if(sockfd < 0) return ERR_CANTRUN;
+    if(!serialsock){
+        WARNX("Not connected to serial socket!");
+        return ERR_CANTRUN;
+    }
     char buf[256];
     size_t msglen;
     if(!msg) msglen = snprintf(buf, 255, "%s\n", stp_commands[idx]);
     else msglen = snprintf(buf, 255, "%s%s\n", stp_commands[idx], msg);
     //DBG("Send message '%s', len %zd", buf, msglen);
-    if(pthread_mutex_lock(&mesg_mutex)){
-        WARN("pthread_mutex_lock()");
-        LOGWARN("send_message(): pthread_mutex_lock() err");
-        return FALSE;
-    }
-    clrbuf();
-    if(send(sockfd, buf, msglen, 0) != (ssize_t)msglen){
+    if(sl_sock_sendstrmessage(serialsock, buf) != (ssize_t)msglen){
         WARN("send()");
         LOGWARN("send_message(): send() failed");
         return ERR_WRONGLEN;
     }
-    //LOGDBG("Message '%s' sent", buf);
-    pthread_mutex_unlock(&mesg_mutex);
-    return read_and_parse(idx);
+    LOGDBG("Message '%s' sent", buf);
+    ;;; // wait for errcode
+    return ERR_OK;
 }
 
 // send command cmd to n'th motor with param p, @return FALSE if failed
@@ -470,42 +384,54 @@ static void chkall(){
 }
 
 /**
- * @brief stp_connect_server - try connect to a local steppers CAN server
+ * @brief clientproc - process data received from serial terminal
+ * @param par - socket
+ * @return NULL
+ */
+void *clientproc(void _U_ *par){
+    FNAME();
+    char rbuf[BUFSIZ];
+    if(!serialsock) return NULL;
+    do{
+        ssize_t got = sl_sock_readline(serialsock, rbuf, BUFSIZ);
+        //LOGDBG("got=%zd", got);
+        if(got < 0){ // disconnected
+            WARNX("Serial server disconnected");
+            if(serialsock) sl_sock_delete(&serialsock);
+            return NULL;
+        }else if(got == 0){ // nothing to read from serial port
+            usleep(1000);
+            continue;
+        }
+        // process data
+        DBG("GOT: %s", rbuf);
+        parse_msg(rbuf);
+    } while(serialsock && serialsock->connected);
+    WARNX("disconnected");
+    if(serialsock) sl_sock_delete(&serialsock);
+    return NULL;
+}
+
+/**
+ * @brief stp_connect_server - try connect to a local steppers serial server
  * @return FALSE if failed
  */
 static int stp_connect_server(){
-    DBG("STP_connect(%d)", theconf.stpserverport);
-    char port[10];
-    snprintf(port, 10, "%d", theconf.stpserverport);
+    FNAME();
     stp_disconnect();
-    struct addrinfo hints = {0}, *res, *p;
-    hints.ai_family = AF_INET;
-    hints.ai_socktype = SOCK_STREAM;
-    hints.ai_flags = AI_PASSIVE;
-    if(getaddrinfo(NULL, port, &hints, &res) != 0){
-        WARN("getaddrinfo()");
+    char node[32];
+    snprintf(node, 31, "%d", theconf.stpserverport);
+    DBG("Try to connect via port %s", node);
+    serialsock = sl_sock_run_client(SOCKT_NETLOCAL, node, 4096);
+    if(!serialsock){
+        DBG("Can't connect to serial server via port %s", node);
         return FALSE;
     }
-    // loop through all the results and connect to the first we can
-    for(p = res; p; p = p->ai_next){
-        if((sockfd = socket(p->ai_family, p->ai_socktype, p->ai_protocol)) == -1){
-            WARN("socket");
-            continue;
-        }
-        if(connect(sockfd, p->ai_addr, p->ai_addrlen) == -1){
-            WARN("connect()");
-            close(sockfd);
-            continue;
-        }
-        break; // if we get here, we have a successfull connection
-    }
-    if(!p){
-        WARNX("Can't connect to socket");
-        LOGWARN("Can't connect to steppers server");
-        sockfd = -1;
+    if(pthread_create(&clientthread, NULL, clientproc, NULL)){
+        sl_sock_delete(&serialsock);
+        LOGWARN("stp_connect_server(): can't create client thread");
         return FALSE;
     }
-    freeaddrinfo(res);
     // register and set max speed; don't check `register` answer as they could be registered already
     state = STP_RELAX;
     sstatus = SETUP_NONE;
@@ -1121,7 +1047,7 @@ static steppersproc steppers = {
 };
 
 /**
- * @brief STP_connect - run a thread processed steppers status
+ * @brief steppers_connect - run a thread processed steppers status
  * @return FALSE if failed to connect immediately
  */
 steppersproc* steppers_connect(){
