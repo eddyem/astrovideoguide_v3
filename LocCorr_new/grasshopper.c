@@ -20,6 +20,7 @@
 #include <C/FlyCapture2Defs_C.h>
 #include <float.h> // FLT_EPSILON
 #include <math.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -39,7 +40,7 @@ static fc2Error err = FC2_ERROR_OK;
 #define FC2FN(fn, ...) do{err = FC2_ERROR_OK; if(FC2_ERROR_OK != (err=fn(context __VA_OPT__(,) __VA_ARGS__))){ \
     WARNX(Stringify(fn) "(): %s", fc2ErrorToDescription(err)); return FALSE;}}while(0)
 
-static void disconnect(){
+static void cam_disconnect(){
     fc2DestroyContext(context);
 }
 
@@ -178,7 +179,7 @@ static int changeformat(frameformat *fmt){
     return TRUE;
 }
 
-static int connect(){
+static int cam_connect(){
     FNAME();
     unsigned int numCameras = 0;
     if(FC2_ERROR_OK != (err = fc2CreateContext(&context))){
@@ -263,8 +264,8 @@ static float maxgain(){
 
 // exported object
 camera GrassHopper = {
-    .disconnect = disconnect,
-    .connect = connect,
+    .disconnect = cam_disconnect,
+    .connect = cam_connect,
     .capture = capture,
     .setbrightness = setbrightness,
     .setexp = setexp,

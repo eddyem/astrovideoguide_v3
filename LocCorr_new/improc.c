@@ -107,7 +107,7 @@ static void getDeviation(object *curobj){
     Xc[counter] = curobj->xc; Yc[counter] = curobj->yc;
     if(fXYlog){ // make log record
         fprintf(fXYlog, "%-14.2f\t%.1f\t%.1f\t%.1f\t%.1f\t%.1f\t",
-                dtime() - tstart, curobj->xc, curobj->yc,
+                sl_dtime() - tstart, curobj->xc, curobj->yc,
                 curobj->xsigma, curobj->ysigma, curobj->WdivH);
     }
     //DBG("counter = %d", counter);
@@ -209,8 +209,8 @@ void process_file(Image *I){
     il_ConnComps *cc = NULL;
     size_t *S = NULL;
 #ifdef EBUG
-    double t0 = dtime(), tlast = t0;
-#define DELTA(p) do{double t = dtime(); DBG("---> %s @ %gms (delta: %gms)", p, (t-t0)*1e3, (t-tlast)*1e3); tlast = t;}while(0)
+    double t0 = sl_dtime(), tlast = t0;
+#define DELTA(p) do{double t = sl_dtime(); DBG("---> %s @ %gms (delta: %gms)", p, (t-t0)*1e3, (t-tlast)*1e3); tlast = t;}while(0)
 #else
 #define DELTA(x)
 #endif
@@ -324,7 +324,7 @@ void process_file(Image *I){
                         qsort(Objects, objctr, sizeof(object), compDist);
                 }
 SKIP_FULL_PROCESS:
-                DBGLOG("T%.2f, N=%d\n", dtime(), objctr);
+                DBGLOG("T%.2f, N=%d\n", sl_dtime(), objctr);
                 DELTA("Calculate deviations");
                 if(objctr){
 #ifdef EBUG
@@ -386,8 +386,8 @@ SKIP_FULL_PROCESS:
         }
     }else Image_write_jpg(I, GP->outputjpg, theconf.equalize);
     ++ImNumber;
-    if(lastTproc > 1.) FPS = 1. / (dtime() - lastTproc);
-    lastTproc = dtime();
+    if(lastTproc > 1.) FPS = 1. / (sl_dtime() - lastTproc);
+    lastTproc = sl_dtime();
     DELTA("End");
 }
 
@@ -408,7 +408,7 @@ static char *watchfl(const char *messageid, char *buf, int buflen){
 }
 
 int process_input(InputType tp, char *name){
-    DBG("process_input(%d, %s)", tp, name);
+    LOGDBG("process_input(%d, %s)", tp, name);
     if(tp == T_DIRECTORY){
         imagedata = watchdr;
         return watch_directory(name, process_file);
@@ -460,7 +460,7 @@ void openXYlog(const char *name){
     fprintf(fXYlog, "# Start at: %s", ctime(&t));
     fprintf(fXYlog, "# time\t\tXc\tYc\tSx\tSy\tW/H\taverX\taverY\tSX\tSY\n");
     fflush(fXYlog);
-    tstart = dtime();
+    tstart = sl_dtime();
 }
 void closeXYlog(){
     if(!fXYlog) return;

@@ -1,0 +1,3 @@
+Mon Apr 28 13:05:48 MSK 2025
+Move to libusefull_macros v0.3.2.
+Fixed some troubles with `inotifying` log files.

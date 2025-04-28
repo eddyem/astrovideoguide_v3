@@ -266,10 +266,10 @@ static ssize_t read_message(char *msg, size_t msglen){
         LOGWARN("read_message(): pthread_mutex_lock() err");
         return 0;
     }
-    double t0 = dtime();
+    double t0 = sl_dtime();
     size_t gotbytes = 0;
     --msglen; // for trailing zero
-    while(dtime() - t0 < WAITANSTIME && gotbytes < msglen && sockfd > 0){
+    while(sl_dtime() - t0 < WAITANSTIME && gotbytes < msglen && sockfd > 0){
         if(!canread()) continue;
         int n = recv(sockfd, msg+gotbytes, msglen, 0);
         if(n <= 0){ // disconnect or error
@@ -280,7 +280,7 @@ static ssize_t read_message(char *msg, size_t msglen){
         gotbytes += n;
         msglen -= n;
         if(msg[gotbytes-1] == '\n') break;
-        t0 = dtime();
+        t0 = sl_dtime();
     }
     //DBG("Dt=%g, gotbytes=%zd, sockfd=%d, msg='%s'", dtime()-t0,gotbytes,sockfd,msg);
     pthread_mutex_unlock(&mesg_mutex);
@@ -343,8 +343,8 @@ static errcodes getecode(const char *msg){
  */
 static errcodes read_and_parse(steppercmd idx){
     char value[128], msg[1024];
-    double t0 = dtime();
-    while(dtime() - t0 < WAITANSTIME*10.){
+    double t0 = sl_dtime();
+    while(sl_dtime() - t0 < WAITANSTIME*10.){
         ssize_t got = read_message(msg, 1024);
         if(got < 1) continue;
         //LOGDBG("GOT from stepper server:\n%s\n", msg);
@@ -760,7 +760,7 @@ static int try2correct(double dX, double dY){
     pidU.Kp = theconf.PIDU_P; pidU.Ki = theconf.PIDU_I; pidU.Kd = theconf.PIDU_D;
     pidV.Kp = theconf.PIDV_P; pidV.Ki = theconf.PIDV_I; pidV.Kd = theconf.PIDV_D;
     double dU, dV;
-    double current_time = dtime();
+    double current_time = sl_dtime();
     if( current_time - pidU.prev_time > MAX_PID_TIME
         || current_time - pidV.prev_time > MAX_PID_TIME){
         LOGWARN("Too old PID time: have dt=%gs", current_time - pidU.prev_time);
@@ -803,7 +803,7 @@ static int try2correct(double dX, double dY){
  * This function called from improc.c each time the corrections calculated (ONLY IF Xtarget/Ytarget > -1)
  */
 static void stp_process_corrections(double X, double Y){
-    static bool coordstrusted = TRUE;
+    static int coordstrusted = TRUE;
     if(!relaxed(Ustepper) || !relaxed(Vstepper)){ // don't process coordinates when moving
         coordstrusted = FALSE;
         coordsRdy = FALSE;
@@ -958,7 +958,7 @@ static char *set_stpstatus(const char *newstatus, char *buf, int buflen){
 // MAIN THREAD
 static void *stp_process_states(_U_ void *arg){
     // FNAME();
-    static bool first = TRUE; // flag for logging when can't reconnect
+    static int first = TRUE; // flag for logging when can't reconnect
     while(!stopwork){
         usleep(10000);
         // check for disconnection flag
@@ -989,10 +989,10 @@ static void *stp_process_states(_U_ void *arg){
             if(nth_motor_setter(CMD_RELPOS, Vstepper, dVmove)) dVmove = 0;
         }
         static double t0 = -1.;
-        if(t0 < 0.) t0 = dtime();
+        if(t0 < 0.) t0 = sl_dtime();
         if(state != STP_DISCONN){
-            if(dtime() - t0 >= 0.1){ // each 0.1s check state if steppers aren't disconnected
-                t0 = dtime();
+            if(sl_dtime() - t0 >= 0.1){ // each 0.1s check state if steppers aren't disconnected
+                t0 = sl_dtime();
                 chkall();
             }
             if(!relaxed(Ustepper) && !relaxed(Vstepper)) continue;

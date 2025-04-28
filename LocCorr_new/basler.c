@@ -63,7 +63,7 @@ static char* describeError(GENAPIC_RESULT reserr){
 #define PYLONFN(fn, ...) do{register GENAPIC_RESULT reserr; if(GENAPI_E_OK != (reserr=fn(__VA_ARGS__))){ \
     WARNX(#fn "(): %s", describeError(reserr)); return FALSE;}}while(0)
 
-static void disconnect(){
+static void cam_disconnect(){
     FNAME();
     if(!isopened) return;
     FREE(imgBuf);
@@ -180,13 +180,13 @@ static void disableauto(){
 }
 
 static void GENAPIC_CC removalCallbackFunction(_U_ PYLON_DEVICE_HANDLE hDevice){
-    disconnect();
+    cam_disconnect();
 }
 
-static int connect(){
+static int cam_connect(){
     FNAME();
     size_t numDevices;
-    disconnect();
+    cam_disconnect();
     PylonInitialize();
     PYLONFN(PylonEnumerateDevices, &numDevices);
     if(!numDevices){
@@ -223,7 +223,7 @@ static Image *capture(){
     static double t0 = 0.;
     if(!getFloat("DeviceTemperature", &f)) WARNX("Can't get temperature");
     else{
-        double t = dtime();
+        double t = sl_dtime();
         if(t - t0 >= 30.){ // log T each 30 seconds
             LOGMSG("Basler temperature: %.1f", f.val);
             t0 = t;
@@ -327,8 +327,8 @@ static float gainmax(){
 
 // exported object
 camera Basler = {
-    .disconnect = disconnect,
-    .connect = connect,
+    .disconnect = cam_disconnect,
+    .connect = cam_connect,
     .capture = capture,
     .setbrightness = setbrightness,
     .setexp = setexp,

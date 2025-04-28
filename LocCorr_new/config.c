@@ -290,7 +290,7 @@ confparam *chk_keyval(const char *key, const char *val, key_value *result){
         break;
         case PAR_DOUBLE:
             //DBG("DOUBLE");
-            if(!str2double(&result->val.dblval, val)){
+            if(!sl_str2d(&result->val.dblval, val)){
                 WARNX("Wrong double value '%s' of parameter '%s'", val, key);
                 return NULL;
             }

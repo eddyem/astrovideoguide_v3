@@ -1,9 +1,0 @@
-MULTIPLY steps & speed by microsteps!!!
-
-register U 0x581 stepper  -> OK\nU maxspeed=OK
-mesg U maxspeed 12800     -> OK\nU maxspeed=OK
-register V 0x582 stepper  -> OK\nV maxspeed=OK
-mesg V maxspeed 12800     -> OK\nV maxspeed=OK
-mesg U relmove 1600       -> OK\nU rotdir=OK\nU relsteps=OK
-mesg U setzero            -> OK\nU curpos=OK
-mesg V setzero            -> OK\nV curpos=OK

@@ -361,7 +361,7 @@ Image *get_median(const Image *img, int seed){
 
     size_t blksz = seed * 2 + 1, fullsz = blksz * blksz;
 #ifdef EBUG
-    double t0 = dtime();
+    double t0 = sl_dtime();
 #endif
     OMP_FOR(shared(inputima, med))
     for(size_t x = seed; x < w - seed; ++x){
@@ -385,7 +385,7 @@ Image *get_median(const Image *img, int seed){
     }
     Image_minmax(out);
     DBG("time for median filtering %zdx%zd of image %zdx%zd: %gs", blksz, blksz, w, h,
-        dtime() - t0);
+        sl_dtime() - t0);
     return out;
 }
 
@@ -401,7 +401,7 @@ int get_stat(const Image *in, int seed, Image **mean, Image **std){
     if(!in) return FALSE;
     if(seed < 1 || seed > (in->width - 1)/2 || seed > (in->height - 1)/2) return FALSE;
 #ifdef EBUG
-    double t0 = dtime();
+    double t0 = sl_dtime();
 #endif
     Image *M = NULL, *S = NULL;
     if(mean) M = Image_sim(in);
@@ -441,6 +441,6 @@ int get_stat(const Image *in, int seed, Image **mean, Image **std){
         Image_minmax(S);
         *std = S;
     }
-    DBG("time for mean/sigma computation: %gs", dtime() - t0);
+    DBG("time for mean/sigma computation: %gs", sl_dtime() - t0);
     return TRUE;
 }

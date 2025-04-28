@@ -18,6 +18,7 @@
 
 #ifdef EBUG
 
+#include <stdio.h>
 #include <string.h>
 #include <unistd.h>
 
@@ -25,10 +26,11 @@
 
 #define DEBUGLOG        "DEBUG.log"
 
-sl_log *debuglog = NULL;
+sl_log_t *debuglog = NULL;
 
 void makedebuglog(){
     unlink(DEBUGLOG);
+    DBG("Create debug log file: " DEBUGLOG);
     debuglog = sl_createlog(DEBUGLOG, LOGLEVEL_ANY, 0);
 }
 

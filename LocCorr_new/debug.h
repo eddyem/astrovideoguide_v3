@@ -27,7 +27,7 @@
 
 #ifdef EBUG
 
-extern sl_log *debuglog;
+extern sl_log_t *debuglog;
 void makedebuglog();
 void *my_malloc(size_t N, size_t S);
 void my_free(void *ptr);
@@ -36,6 +36,7 @@ void my_free(void *ptr);
 #undef ALLOC
 #undef MALLOC
 #undef FREE
+#undef DBGLOG
 #define _LOG(...)       do{if(!debuglog) makedebuglog(); sl_putlogt(1, debuglog, LOGLEVEL_ERR, __VA_ARGS__);}while(0)
 #define DBGLOG(...)     do{_LOG("%s (%s, line %d)", __func__, __FILE__, __LINE__); \
                            sl_putlogt(0, debuglog, LOGLEVEL_ERR, __VA_ARGS__);}while(0)

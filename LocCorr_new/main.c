@@ -66,14 +66,15 @@ void iffound_default(pid_t pid){
 }
 
 static void *procinp_thread(_U_ void* arg){
+    LOGDBG("procinp_thread(%s)", GP->inputname);
     int p = process_input(tp, GP->inputname);
-    LOGDBG("process_input=%d", p);
+    LOGERR("procinp_thread(%s)=%d", GP->inputname, p);
     return NULL;
 }
 
 static InputType chk_inp(const char *name){
     if(!name) ERRX("Point file or directory name to monitor");
-    InputType itp = chkinput(GP->inputname);
+    InputType itp = chkinput(name);
     if(T_WRONG == itp) return T_WRONG;
     green("\n%s is a ", name);
     switch(itp){
@@ -116,7 +117,7 @@ static InputType chk_inp(const char *name){
 }
 
 int main(int argc, char *argv[]){
-    initial_setup();
+    sl_init();
     char *self = strdup(argv[0]);
     GP = parse_args(argc, argv);
     if(!chkconfig(GP->configname)){
@@ -142,11 +143,8 @@ int main(int argc, char *argv[]){
         fclose(f);
     }
     if(GP->logfile){
-        sl_loglevel lvl = LOGLEVEL_ERR; // default log level - errors
-        int v = GP->verb;
-        while(v--){ // increase loglevel for each "-v"
-            if(++lvl == LOGLEVEL_ANY) break;
-        }
+        sl_loglevel_e lvl = LOGLEVEL_ERR + GP->verb; // default log level - errors
+        if(lvl > LOGLEVEL_ANY) lvl = LOGLEVEL_ANY;
         OPENLOG(GP->logfile, lvl, 1);
         DBG("Opened log file @ level %d", lvl);
     }
@@ -194,7 +192,7 @@ int main(int argc, char *argv[]){
             theconf.stpserverport = GP->steppersport;
         }
     }
-    check4running(self, GP->pidfile);
+    sl_check4running(self, GP->pidfile);
     DBG("%s started, snippets library version is %s\n", self, sl_libversion());
     free(self); self = NULL;
     signal(SIGTERM, signals); // kill (-15) - quit
@@ -202,6 +200,7 @@ int main(int argc, char *argv[]){
     signal(SIGINT, signals);  // ctrl+C - quit
     signal(SIGQUIT, signals); // ctrl+\ - quit
     signal(SIGTSTP, SIG_IGN); // ignore ctrl+Z
+    DBGLOG("\n\n\nStarted; capt: %s", GP->inputname);
     while(1){ // guard for dead processes
         childpid = fork();
         if(childpid){ // father
@@ -216,6 +215,7 @@ int main(int argc, char *argv[]){
             break; // go out to normal functional
         }
     }
+    DBGLOG("start thread; capt: %s", GP->inputname);
     if(!(theSteppers = steppers_connect())){
         LOGERR("Steppers server unavailable, can't run");
         WARNX("Steppers server unavailable, can't run");

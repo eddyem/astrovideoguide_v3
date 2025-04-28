@@ -228,13 +228,13 @@ static void *procthread(void* v){
     typedef void (*procfn_t)(Image*);
     void (*process)(Image*) = (procfn_t)v;
 #ifdef EBUG
-    double t0 = dtime();
+    double t0 = sl_dtime();
 #endif
     while(!stopwork){
         while(iCaptured < 0) usleep(1000);
         pthread_mutex_lock(&capt_mutex);
         if(Icap[iCaptured]){
-            DBG("---- got image #%d @ %g", iCaptured, dtime() - t0);
+            DBG("---- got image #%d @ %g", iCaptured, sl_dtime() - t0);
             Image *oIma = Icap[iCaptured]; // take image here and free buffer
             Icap[iCaptured] = NULL;
             pthread_mutex_unlock(&capt_mutex);
@@ -263,7 +263,7 @@ static void *procthread(void* v){
             }
             FREE(oIma->data);
             FREE(oIma);
-            DBG("---- cleared image data @ %g", dtime() - t0);
+            DBG("---- cleared image data @ %g", sl_dtime() - t0);
         }else pthread_mutex_unlock(&capt_mutex);
         usleep(1000);
     }

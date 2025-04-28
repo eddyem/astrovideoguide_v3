@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.20)
 set(PROJ loccorr)
-set(MINOR_VERSION "1")
-set(MID_VERSION "0")
+set(MINOR_VERSION "0")
+set(MID_VERSION "1")
 set(MAJOR_VERSION "0")
 set(VERSION "${MAJOR_VERSION}.${MID_VERSION}.${MINOR_VERSION}")
 
@@ -40,7 +40,7 @@ message("Build type: ${CMAKE_BUILD_TYPE}")
 
 ###### pkgconfig ######
 # pkg-config modules (for pkg-check-modules)
-set(MODULES usefull_macros cfitsio improc)
+set(MODULES usefull_macros>=0.3.2 cfitsio improc)
 
 # find packages:
 SET(CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR})

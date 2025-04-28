@@ -235,7 +235,7 @@ static int cam_findCCD(){
     return TRUE;
 }
 
-static int connect(){
+static int cam_connect(){
     if(!cam_findCCD()) return FALSE;
     cam_closecam();
     lastecode = MV_CC_CreateHandleWithoutLog(&handle, stDeviceList.pDeviceInfo[0]);
@@ -374,10 +374,10 @@ static int cam_startexp(){
 static Image* capture(){
     if(!cam_startexp()) return NULL;
     MV_FRAME_OUT_INFO_EX stImageInfo = {0}; // last image info
-    double starttime = dtime();
+    double starttime = sl_dtime();
     do{
         usleep(100);
-        double diff = exptime - (dtime() - starttime);
+        double diff = exptime - (sl_dtime() - starttime);
         if(diff > 0.) continue; // wait until exposure ends
         DBG("diff = %g", diff);
         if(diff < -5.0){ // wait much longer than exp lasts
@@ -393,7 +393,7 @@ static Image* capture(){
 
 camera Hikrobot = {
     .disconnect = cam_closecam,
-    .connect = connect,
+    .connect = cam_connect,
     .capture = capture,
     .setbrightness = cam_setbright,
     .setexp = setexp,

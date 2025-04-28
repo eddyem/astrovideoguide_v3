@@ -43,16 +43,25 @@ static int changed(const char *name, int fd, uint32_t mask){
         WARN("inotify read()");
         return -1;
     }
+    DBG("got: %zd", len);
     if(len < 1) return 0; // not ready
     uint32_t bm = buf[0].mask;
     buf[0].mask = 0;
-    for(int i = 0; i < 10; ++i)
-        DBG("CHANGED: %s (%d)\n", buf[i].name, bm);
+    int i = 9;
+    for(; i > -1; --i){ // find last changed file
+        DBG("%d: mask=%04x; len=%u", i, buf[i].mask, buf[i].len);
+        if(buf[i].mask & IN_IGNORED || buf[i].len < 1) continue;
+        DBG("%d: name=%s", i, buf[i].name);
+    }
+    if(i == -1){
+        DBG("NO names found");
+        return -1;
+    }
     if(bm & mask){
         if(name){
-            snprintf(filenm, FILENAME_MAX, "%s/%s", name, buf[0].name); // full path
+            snprintf(filenm, FILENAME_MAX, "%s/%s", name, buf[i].name); // full path
         }else{
-            snprintf(filenm, FILENAME_MAX, "%s", buf[0].name); // file name
+            snprintf(filenm, FILENAME_MAX, "%s", buf[i].name); // file name
         }
         return 1;
     }
@@ -98,6 +107,10 @@ static int watch_any(const char *name, void (*process)(Image*), uint32_t mask){
         if(ch == 1){ // changed
             if(process){
                 Image *I = Image_read(filenm);
+                if(!I && (mask & IN_ISDIR)){ // changed file isn't an image
+                    DBG("Changed file isn't an image");
+                    continue;
+                }
                 process(I);
             }
         }
@@ -109,7 +122,7 @@ static int watch_any(const char *name, void (*process)(Image*), uint32_t mask){
 
 
 int watch_file(const char *name, void (*process)(Image*)){
-    FNAME();
+    DBG("try to watch file %s", name);
     if(!name){
         WARNX("Need filename");
         return 1;
@@ -118,7 +131,7 @@ int watch_file(const char *name, void (*process)(Image*)){
 }
 
 int watch_directory(char *name, void (*process)(Image*)){
-    FNAME();
+    DBG("try to watch directory %s", name);
     if(!name){
         WARNX("Need directory name");
         return 1;
