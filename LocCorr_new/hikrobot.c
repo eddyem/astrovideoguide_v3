@@ -372,7 +372,7 @@ static int setexp(float e){
 
 static int cam_startexp(){
     if(!handle || !pdata) return FALSE;
-    DBG("Start exposition");
+    DBG("Start exposition for %gs", exptime);
     MV_CC_StopGrabbing(handle);
     TRY(StartGrabbing);
     ONERR() return FALSE;
@@ -380,22 +380,26 @@ static int cam_startexp(){
 }
 
 static Image* capture(){
+    double starttime = sl_dtime();
     if(!cam_startexp()) return NULL;
     MV_FRAME_OUT_INFO_EX stImageInfo = {0}; // last image info
-    double starttime = sl_dtime();
+    DBG("Started capt @ %g", sl_dtime() - starttime);
     do{
         usleep(100);
         double diff = exptime - (sl_dtime() - starttime);
         if(diff > 0.) continue; // wait until exposure ends
         DBG("diff = %g", diff);
-        if(diff < -5.0){ // wait much longer than exp lasts
+        if(diff < -MAX_READOUT_TM){ // wait much longer than exp lasts
+            DBG("OOps, time limit");
             MV_CC_StopGrabbing(handle);
             return NULL;
         }
         TRY(GetOneFrameTimeout, pdata, pdatasz, &stImageInfo, 10);
         ONOK() break;
     }while(1);
+    DBG("Tcapt=%g, exptime=%g", sl_dtime() - starttime, exptime);
     Image *captIma = u8toImage(pdata, stImageInfo.nWidth, stImageInfo.nHeight, stImageInfo.nWidth);
+    DBG("return @ %g", sl_dtime() - starttime);
     return captIma;
 }
 

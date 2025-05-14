@@ -257,6 +257,7 @@ int get_histogram(const Image *I, size_t histo[HISTOSZ]){
  */
 int calc_background(Image *img){
     if(!img || !img->data) return FALSE;
+    DBG("image min/max=%d/%d", img->minval, img->maxval);
     if(img->maxval == img->minval){
         WARNX("Zero or overilluminated image!");
         return FALSE;
@@ -266,7 +267,7 @@ int calc_background(Image *img){
             WARNX("Image values too small");
             return FALSE;
         }
-        img->background = theconf.fixedbkg;
+        img->background = theconf.fixedbkgval;
         return TRUE;
     }
     size_t histogram[HISTOSZ];

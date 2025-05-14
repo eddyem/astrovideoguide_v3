@@ -31,6 +31,7 @@
 #include "draw.h"
 #include "grasshopper.h"
 #include "hikrobot.h"
+#include "imagefile.h"
 #include "improc.h"
 #include "inotify.h"
 #include "steppers.h"
@@ -132,7 +133,7 @@ static void getDeviation(object *curobj){
     averflag = 1;
     if(fXYlog) fprintf(fXYlog, "%.1f\t%.1f\t%.1f\t%.1f", xx, yy, Sx, Sy);
 process_corrections:
-    LOGDBG("here");
+    //LOGDBG("here");
     if(theSteppers){
         DBG("Process corrections");
         if(theSteppers->proc_corr && averflag){
@@ -145,13 +146,9 @@ process_corrections:
         LOGERR("Lost connection with stepper server");
         WARNX("Lost connection with stepper server");
     }
-    LOGDBG("And there");
+    //LOGDBG("And there");
     XYnewline();
 }
-
-typedef struct{ // statistics: mean and RMS
-    float xc; float yc; float xsigma; float ysigma;
-} ptstat_t;
 
 /**
  * @brief sumAndStat - calculate statistics in region of interest
@@ -241,6 +238,7 @@ void process_file(Image *I){
             DBG("Get sum and stat for simplest centroid");
             double sum = sumAndStat(I, NULL, 0, &roi, &stat);
             if(sum > 0.){
+                I->stat = stat;
                 if( fabsf(stat.xc - prev_x) > XY_TOLERANCE ||
                     fabsf(stat.yc - prev_y) > XY_TOLERANCE){
                     DBG("Bad: was x=%d, y=%d; become x=%g, y=%g ==> need fine calculations", prev_x, prev_y, xc, yc);
@@ -248,6 +246,7 @@ void process_file(Image *I){
                     double WdH = stat.xsigma/stat.ysigma;
                     // wery approximate area inside sigmax*sigmay
                     double area = .4 * stat.xsigma * stat.ysigma;
+                    I->stat.area = (int)area;
                     if(!isnan(WdH) && !isinf(WdH) && // if W/H is a number
                         WdH > theconf.minwh && WdH < theconf.maxwh && // if W/H near circle
                         area > theconf.minarea && area < theconf.maxarea){ // if star area is in range
@@ -274,31 +273,38 @@ void process_file(Image *I){
         uint8_t *ibin = Im2bin(I, I->background);
         DELTA("Made binary");
         if(ibin){
-            //savebin(ibin, W, H, "binary.fits");
-            //DELTA("save binary.fits");
+            Image *Itmp = bin2Im(ibin, I->width, I->height);
+                Image_write_jpg(Itmp, "binary.jpg", 1);
+                Image_free(&Itmp);
+                DELTA("save binary");
             uint8_t *er = il_erosionN(ibin, W, H, theconf.Nerosions);
             FREE(ibin);
             DELTA("Erosion");
-            //savebin(er, W, H, "erosion.fits");
-            //DELTA("Save erosion");
+                Itmp = bin2Im(er, I->width, I->height);
+                Image_write_jpg(Itmp, "erosion.jpg", 1);
+                Image_free(&Itmp);
+                DELTA("Save erosion");
             uint8_t *opn = il_dilationN(er, W, H, theconf.Ndilations);
             FREE(er);
             DELTA("Opening");
-            //savebin(opn, W, H, "opening.fits");
-            //DELTA("Save opening");
+                Itmp = bin2Im(opn, I->width, I->height);
+                Image_write_jpg(Itmp, "opening.jpg", 1);
+                Image_free(&Itmp);
+                DELTA("Save opening");
             S = il_cclabel4(opn, W, H, &cc);
             FREE(opn);
-            DBG("Nobj=%zd", cc->Nobj-1);
+            if(S && cc) DBG("Nobj=%zd", cc->Nobj-1);
             if(S && cc && cc->Nobj > 1){ // Nobj = amount of objects + 1
                 DBGLOG("Nobj=%zd", cc->Nobj-1);
                 if(Nallocated < cc->Nobj-1){
                     Nallocated = cc->Nobj-1;
                     Objects = realloc(Objects, Nallocated*sizeof(object));
                 }
+                I->stat.area = cc->boxes[1].area;
                 for(size_t i = 1; i < cc->Nobj; ++i){
                     il_Box *b = &cc->boxes[i];
                     double wh = ((double)b->xmax - b->xmin)/(b->ymax - b->ymin);
-                    //DBG("Obj# %zd: wh=%g, area=%d", i, wh, b->area);
+                    DBG("Obj# %zd: wh=%g, area=%d", i, wh, b->area);
                     if(wh < theconf.minwh || wh > theconf.maxwh) continue;
                     if((int)b->area < theconf.minarea || (int)b->area > theconf.maxarea) continue;
                     ptstat_t stat;

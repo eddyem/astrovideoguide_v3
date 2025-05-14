@@ -32,6 +32,11 @@ typedef uint8_t Imtype;
 // WARNING! Check code if you change Imtype: e.g. recalcexp() and other
 #define HISTOSZ (256)
 
+typedef struct{ // statistics: mean, RMS, area
+    float xc; float yc; float xsigma; float ysigma;
+    int area;
+} ptstat_t;
+
 typedef struct{
     int width;			// width
     int height;			// height
@@ -40,6 +45,7 @@ typedef struct{
     Imtype maxval;
     float avg_intensity;
     Imtype background;  // background value
+    ptstat_t stat;      // image statistics
 } Image;
 
 // input file/directory type

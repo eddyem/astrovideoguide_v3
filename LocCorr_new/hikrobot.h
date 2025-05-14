@@ -23,6 +23,9 @@
 
 #define HIKROBOT_CAPT_NAME        "hikrobot"
 
+// maximal readout time, seconds
+#define MAX_READOUT_TM      (6.)
+
 // tolerance of float values
 #define HR_FLOAT_TOLERANCE  (0.005)
 

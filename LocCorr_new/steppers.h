@@ -18,6 +18,9 @@
 
 #pragma once
 
+// timeout for "no answer from motors", seconds
+#define STEPPERS_NOANS_TIMEOUT  (5.)
+
 // set state to `disconnect` after this amount of errors in `moving_finished`
 #define MAX_ERR_CTR     (15)
 

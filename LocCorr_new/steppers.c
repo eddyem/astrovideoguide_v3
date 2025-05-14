@@ -86,8 +86,8 @@ steppersproc *theSteppers = NULL;
 // stepper numbers
 typedef enum{
       Ustepper = 0,
-      Vstepper = 2,
-      Fstepper = 1,
+      Vstepper = 1,
+      Fstepper = 2,
     } stepperno;
 
 const char *motornames[NMOTORS] = {
@@ -200,6 +200,7 @@ static void stp_disc(){
 
 static void stp_disconnect(){
     DBG("Try to disconnect");
+    LOGDBG("Try to disconnect");
     if(serialsock){
         DBG("Close socket");
         sl_sock_delete(&serialsock);
@@ -292,9 +293,8 @@ static void parse_msg(char *msg){
         for(int idx = 0; idx < CMD_AMOUNT; ++idx){
             // search index in commands
             if(0 == strcmp(stp_commands[idx], key)){ // found our
-                free(key);
                 //LOGDBG("OK, idx=%d, cmd=%s", idx, stp_commands[idx]);
-                parser(idx, parno, ival);
+                LastErr = parser(idx, parno, ival);
                 break;
             }
         }
@@ -323,14 +323,19 @@ static errcodes send_message(steppercmd idx, char *msg){
     if(!msg) msglen = snprintf(buf, 255, "%s\n", stp_commands[idx]);
     else msglen = snprintf(buf, 255, "%s%s\n", stp_commands[idx], msg);
     //DBG("Send message '%s', len %zd", buf, msglen);
+    LastErr = ERR_AMOUNT;
     if(sl_sock_sendstrmessage(serialsock, buf) != (ssize_t)msglen){
         WARN("send()");
         LOGWARN("send_message(): send() failed");
         return ERR_WRONGLEN;
     }
-    LOGDBG("Message '%s' sent", buf);
-    ;;; // wait for errcode
-    return ERR_OK;
+    //LOGDBG("send_message(): message '%s' sent", buf);
+    double t0 = sl_dtime();
+    while(sl_dtime() - t0 < STEPPERS_NOANS_TIMEOUT){
+        if(LastErr != ERR_AMOUNT) return LastErr;
+    }
+    LOGWARN("send_message(): got NO answer for %s%s", stp_commands[idx], msg);
+    return ERR_CANTRUN;
 }
 
 // send command cmd to n'th motor with param p, @return FALSE if failed
@@ -392,20 +397,24 @@ void *clientproc(void _U_ *par){
     FNAME();
     char rbuf[BUFSIZ];
     if(!serialsock) return NULL;
+    double t0 = sl_dtime();
     do{
         ssize_t got = sl_sock_readline(serialsock, rbuf, BUFSIZ);
         //LOGDBG("got=%zd", got);
-        if(got < 0){ // disconnected
+        if(got < 0 || sl_dtime() - t0 > STEPPERS_NOANS_TIMEOUT){ // disconnected
             WARNX("Serial server disconnected");
+            LOGERR("Serial server disconnected (timeout reached)");
             if(serialsock) sl_sock_delete(&serialsock);
+            state = STP_DISCONN;
             return NULL;
         }else if(got == 0){ // nothing to read from serial port
             usleep(1000);
             continue;
         }
+        //LOGDBG("clientproc(): got '%s'", rbuf);
         // process data
-        DBG("GOT: %s", rbuf);
         parse_msg(rbuf);
+        t0 = sl_dtime();
     } while(serialsock && serialsock->connected);
     WARNX("disconnected");
     if(serialsock) sl_sock_delete(&serialsock);
@@ -458,9 +467,9 @@ static void process_movetomiddle_stage(){
         case SETUP_WAITUV0: // wait for all coordinates moving to zero
             if(!relaxed(Ustepper) || !relaxed(Vstepper) || !relaxed(Fstepper)) break; // didn't reach yet
             // now all motors are stopped -> send positions to zero
-            if( !nth_motor_setter(CMD_ABSPOS, Ustepper, 1) ||
-                !nth_motor_setter(CMD_ABSPOS, Vstepper, 1) ||
-                !nth_motor_setter(CMD_ABSPOS, Fstepper, 1)) break;
+            if( !nth_motor_setter(CMD_ABSPOS, Ustepper, 0) ||
+                !nth_motor_setter(CMD_ABSPOS, Vstepper, 0) ||
+                !nth_motor_setter(CMD_ABSPOS, Fstepper, 0)) break;
             DBG("Reached UVF0!");
             // goto
             if(nth_motor_setter(CMD_GOTO, Ustepper, (theconf.maxUpos + theconf.minUpos)/2) &&
@@ -508,8 +517,8 @@ static void process_setup_stage(){
         case SETUP_WAITUV0: // wait for both coordinates moving to zero
             if(!relaxed(Ustepper) || !relaxed(Vstepper)) break;
             // set current position to 0
-            if( !nth_motor_setter(CMD_ABSPOS, Ustepper, 1) ||
-                !nth_motor_setter(CMD_ABSPOS, Vstepper, 1)) break;
+            if( !nth_motor_setter(CMD_ABSPOS, Ustepper, 0) ||
+                !nth_motor_setter(CMD_ABSPOS, Vstepper, 0)) break;
             DBG("ZERO border reached");
             // goto middle
             if(nth_motor_setter(CMD_GOTO, Ustepper, (theconf.maxUpos+theconf.minUpos)/2) &&
@@ -901,30 +910,38 @@ static void *stp_process_states(_U_ void *arg){
             stp_connect_server();
             continue;
         }
-        // check request to change focus
-        if(chfocus){
-            DBG("Try to move F to %d", newfocpos);
-            if(nth_motor_setter(CMD_GOTO, Fstepper, newfocpos)) chfocus = FALSE;
-        }
-        if(dUmove){
-            DBG("Try to move U by %d", dUmove);
-            if(nth_motor_setter(CMD_RELPOS, Ustepper, dUmove)) dUmove = 0;
-        }
-        if(dVmove){
-            DBG("Try to move V by %d", dVmove);
-            if(nth_motor_setter(CMD_RELPOS, Vstepper, dVmove)) dVmove = 0;
-        }
         static double t0 = -1.;
         if(t0 < 0.) t0 = sl_dtime();
         if(state != STP_DISCONN){
             if(sl_dtime() - t0 >= 0.1){ // each 0.1s check state if steppers aren't disconnected
                 t0 = sl_dtime();
                 chkall();
-            }
-            if(!relaxed(Ustepper) && !relaxed(Vstepper)) continue;
-            first = TRUE;
+                if(!relaxed(Ustepper) && !relaxed(Vstepper)) continue;
+                first = TRUE;
+            }else continue;
         }
         // if we are here, all U/V moving is finished
+        // check request to change focus
+        if(chfocus){
+            DBG("Try to move F to %d", newfocpos);
+            if(nth_motor_setter(CMD_GOTO, Fstepper, newfocpos)){
+                chfocus = FALSE;
+            }
+        }
+        if(dUmove){
+            DBG("Try to move U by %d", dUmove);
+            if(nth_motor_setter(CMD_RELPOS, Ustepper, dUmove)){
+                dUmove = 0;
+                continue;
+            }
+        }
+        if(dVmove){
+            DBG("Try to move V by %d", dVmove);
+            if(nth_motor_setter(CMD_RELPOS, Vstepper, dVmove)){
+                dVmove = 0;
+                continue;
+            }
+        }
         switch(state){ // steppers state machine
             case STP_DISCONN:
                 if(!stp_connect_server()){
@@ -933,7 +950,7 @@ static void *stp_process_states(_U_ void *arg){
                         LOGWARN("Can't reconnect");
                         first = FALSE;
                     }
-                    sleep(5);
+                    sleep(1);
                 }
             break;
             case STP_SETUP: // setup axes (before this state set Xtarget/Ytarget in improc.c)

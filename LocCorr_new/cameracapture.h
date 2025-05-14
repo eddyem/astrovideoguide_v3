@@ -21,6 +21,8 @@
 
 #include "imagefile.h" // Image
 
+// max capture errors contract to make reconnection
+#define MAX_CAPT_ERRORS     (10)
 
 // format of single frame
 typedef struct{

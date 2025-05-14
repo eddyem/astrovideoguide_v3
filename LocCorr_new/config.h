@@ -34,12 +34,12 @@
 #define MAX_THROWPART   (0.9)
 #define MAX_OFFSET      (10000)
 // min/max exposition in ms
-#define EXPOS_MIN       (0.1)
+#define EXPOS_MIN       (0.01)
 #define EXPOS_MAX       (4001.)
 #define GAIN_MIN        (0.)
-#define GAIN_MAX        (100.)
+#define GAIN_MAX        (256.)
 #define BRIGHT_MIN      (0.)
-#define BRIGHT_MAX      (10.)
+#define BRIGHT_MAX      (100.)
 // max average images counter
 #define NAVER_MAX       (25)
 // coefficients to convert dx,dy to du,dv
@@ -52,15 +52,15 @@
 #define MAX_MEDIAN_SEED (7)
 // fixed background
 #define FIXED_BK_MIN    (0)
-#define FIXED_BK_MAX    (250)
+#define FIXED_BK_MAX    (255)
 
 // exposition methods: 0 - auto, 1 - fixed
 #define EXPAUTO         (0)
 #define EXPMANUAL       (1)
 
 // roundness parameter
-#define MINWH                       (0.3)
-#define MAXWH                       (3.)
+#define MINWH           (0.01)
+#define MAXWH           (100.)
 
 // PID limits
 #define PID_P_MIN       (0.1)
