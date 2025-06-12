@@ -47,11 +47,6 @@ do{ fitsstatus = 0;								\
     if(status) fits_report_error(stderr, status);\
 }while(0)
 
-void Image_free(Image **img){
-    FREE((*img)->data);
-    FREE(*img);
-}
-
 // I->data should be allocated!!!
 static inline void convflt2ima(float *f, Image *I){
     if(!I || !I->data || !f) return;

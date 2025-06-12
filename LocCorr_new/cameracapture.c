@@ -35,7 +35,7 @@
 static camera *theCam = NULL;
 
 static float gain = 0., gainmax = 0.;
-static float exptime = 100.;
+static float exptime = -1.;
 static float brightness = 0.;
 static int connected = FALSE;
 
@@ -241,10 +241,10 @@ static void *procthread(void* v){
     double t0 = sl_dtime();
 #endif
     while(!stopwork){
-        DBG("===== iCaptured=%d", iCaptured);
         pthread_mutex_lock(&capt_mutex);
+        //DBG("===== iCaptured=%d", iCaptured);
         if(Icap[iCaptured]){
-            DBG("===== got image #%d @ %g", iCaptured, sl_dtime() - t0);
+            DBG("===== got image iCaptured=#%d @ %g", iCaptured, sl_dtime() - t0);
             Image *oIma = Icap[iCaptured]; // take image here and free buffer
             Icap[iCaptured] = NULL;
             pthread_mutex_unlock(&capt_mutex);
@@ -252,14 +252,11 @@ static void *procthread(void* v){
                 if(theconf.medfilt){
                     Image *X = get_median(oIma, theconf.medseed);
                     if(X){
-                        FREE(oIma->data);
-                        FREE(oIma);
+                        Image_free(&oIma);
                         oIma = X;
                     }
                 }
-                DBG("===== process");
                 process(oIma);
-                DBG("===== done");
                 lastimdata.avg = oIma->avg_intensity;
                 lastimdata.bkg = oIma->background;
                 lastimdata.minval = oIma->minval;
@@ -268,12 +265,10 @@ static void *procthread(void* v){
                 getcenter(&lastimdata.xc, &lastimdata.yc);
             }
             if(theconf.expmethod == EXPAUTO){
-                DBG("test");
                 if(needs_exposure_adjustment(oIma, lastimdata.xc, lastimdata.yc)) recalcexp(oIma);
-                DBG("done");
             }else{
-                if(fabs(theconf.fixedexp - exptime) > FLT_EPSILON)
-                    exptime = theconf.fixedexp;
+                if(fabs(theconf.exptime - exptime) > FLT_EPSILON)
+                    exptime = theconf.exptime;
                 if(fabs(theconf.gain - gain) > FLT_EPSILON)
                     gain = theconf.gain;
                 if(fabs(theconf.brightness - brightness) > FLT_EPSILON)
@@ -281,14 +276,13 @@ static void *procthread(void* v){
             }
             //Icap[iCaptured] = NULL;
             //pthread_mutex_unlock(&capt_mutex);
-            FREE(oIma->data);
-            FREE(oIma);
-            DBG("---- cleared image data @ %g", sl_dtime() - t0);
+            Image_free(&oIma);
+            DBG("===== cleared image data @ %g", sl_dtime() - t0);
         }else{
-            DBG("NO image data");
+            //DBG("===== NO image data");
             pthread_mutex_unlock(&capt_mutex);
         }
-        DBG("NEXT!");
+        //DBG("===== NEXT!");
         usleep(1000);
     }
     return NULL;
@@ -305,6 +299,7 @@ int camcapture(void (*process)(Image*)){
         LOGERR("pthread_create() for image processing failed");
         ERR("pthread_create()");
     }
+    exptime = theconf.exptime;
     while(1){
         double t0 = sl_dtime();
         if(stopwork){
@@ -339,6 +334,7 @@ int camcapture(void (*process)(Image*)){
             DBG("Change exptime to %.2fms\n", exptime);
             if(theCam->setexp(exptime)){
                 oldexptime = exptime;
+                theconf.exptime = exptime;
             }else{
                 WARNX("Can't change exposition time to %gms", exptime);
             }
@@ -350,6 +346,7 @@ int camcapture(void (*process)(Image*)){
             LOGDBG("Change gain to %g", gain);
             if(theCam->setgain(gain)){
                 oldgain = gain;
+                theconf.gain = gain;
             }else{
                 WARNX("Can't change gain to %g", gain);
                 LOGWARN("Can't change gain to %g", gain);
@@ -364,7 +361,7 @@ int camcapture(void (*process)(Image*)){
         DBG("Try to grab (T=%g)", sl_dtime() - t0);
         static int errctr = 0;
         if(!(oIma = theCam->capture())){
-            WARNX("Can't grab image");
+            WARNX("---- Can't grab image");
             if(++errctr > MAX_CAPT_ERRORS){
                 LOGERR("camcapture(): too much capture errors; reconnect camera");
                 camdisconnect();
@@ -372,12 +369,12 @@ int camcapture(void (*process)(Image*)){
             }
             continue;
         }else errctr = 0;
-        DBG("Grabbed @ %g", sl_dtime() - t0);
+        DBG("---- Grabbed @ %g", sl_dtime() - t0);
         pthread_mutex_lock(&capt_mutex);
         if(iCaptured < 0) iCaptured = 0;
         else iCaptured = !iCaptured;
         if(Icap[iCaptured]){ // try current value if previous is still busy
-            DBG("iCap=%d busy!", iCaptured);
+            DBG("---- iCap=%d busy!", iCaptured);
             iCaptured = !iCaptured;
         }
         if(!Icap[iCaptured]){ // previous buffer is free
@@ -386,22 +383,15 @@ int camcapture(void (*process)(Image*)){
             oIma = NULL;
         }else{ // clear our image - there's no empty buffers
             DBG("---- no free buffers for iCap=%d", iCaptured);
-            FREE(oIma->data);
-            FREE(oIma);
+            Image_free(&oIma);
         }
         pthread_mutex_unlock(&capt_mutex);
         DBG("unlocked, T=%g", sl_dtime() - t0);
     }
     pthread_cancel(proc_thread);
-    if(oIma){
-        FREE(oIma->data);
-        FREE(oIma);
-    }
+    if(oIma) Image_free(&oIma);
     for(int i = 0; i < 2; ++i){
-        if(Icap[i]){
-            FREE(Icap[i]->data);
-            FREE(Icap[i]);
-        }
+        if(Icap[i]) Image_free(&Icap[i]);
     }
     camdisconnect();
     DBG("CAMCAPTURE: out");
@@ -430,7 +420,7 @@ char *camstatus(const char *messageid, char *buf, int buflen){
     float xc, yc;
     getcenter(&xc, &yc);
     snprintf(buf, buflen, "{ \"%s\": \"%s\", \"camstatus\": \"%sconnected\", \"impath\": \"%s\", \"imctr\": %llu, "
-         "\"fps\": %.3f, \"expmethod\": \"%s\", \"exposition\": %g, \"gain\": %g, \"maxgain\": %g, \"brightness\": %g, "
+         "\"fps\": %.3f, \"expmethod\": \"%s\", \"exptime\": %g, \"gain\": %g, \"maxgain\": %g, \"brightness\": %g, "
          "\"xcenter\": %.1f, \"ycenter\": %.1f , \"minval\": %d, \"maxval\": %d, \"background\": %d, "
          "\"average\": %.1f, \"xc\": %.1f, \"yc\": %.1f, \"xsigma\": %.1f, \"ysigma\": %.1f, \"area\": %d }\n",
          MESSAGEID, messageid, connected ? "" : "dis", impath, ImNumber, getFramesPerS(),

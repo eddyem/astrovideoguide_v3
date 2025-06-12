@@ -204,12 +204,22 @@ Image *Image_read(const char *name){
  * @return data allocated here
  */
 Image *Image_new(int w, int h){
+    static uint64_t cnt = 0;
     if(w < 1 || h < 1) return NULL;
+    DBGLOG("Image_new(%d, #%u)", w*h, cnt);
     Image *outp = MALLOC(Image, 1);
     outp->width = w;
     outp->height = h;
+    outp->counter = cnt++;
     outp->data = MALLOC(Imtype, w*h);
     return outp;
+}
+
+void Image_free(Image **I){
+    if(!I || !*I) return;
+    DBGLOG("Image_free(%d, #%d)", (*I)->height * (*I)->width, (*I)->counter);
+    FREE((*I)->data);
+    FREE(*I);
 }
 
 /**
@@ -267,7 +277,7 @@ int calc_background(Image *img){
             WARNX("Image values too small");
             return FALSE;
         }
-        img->background = theconf.fixedbkgval;
+        img->background = theconf.background;
         return TRUE;
     }
     size_t histogram[HISTOSZ];

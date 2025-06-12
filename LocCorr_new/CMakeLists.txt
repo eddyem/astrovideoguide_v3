@@ -21,7 +21,7 @@ option(GRASSHOPPER "Add GrassHopper cameras support" OFF)
 option(HIKROBOT "Add HikRobot cameras support" OFF)
 
 # default flags
-set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -W -Wextra")
+set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -W -Wextra -std=c17")
 set(CMAKE_COLOR_MAKEFILE ON)
 
 # cmake -DDEBUG=yes -> debugging
@@ -94,7 +94,7 @@ target_include_directories(${PROJ} PUBLIC ${MODULES_INCLUDE_DIRS} ${FLYCAP_INCLU
 target_link_directories(${PROJ} PUBLIC ${MODULES_LIBRARY_DIRS} ${FLYCAP_LIBRARY_DIRS} ${BASLER_LIBRARY_DIRS} ${MVS_LIBRARY_DIRS})
 message("MOD: ${MODULES_LIBRARY_DIRS}, FC: ${FLYCAP_LIBRARY_DIRS}, MVS: ${MVS_LIBRARY_DIRS}")
 # -D
-add_definitions(${CFLAGS} -DLOCALEDIR=\"${LOCALEDIR}\"
+add_definitions(${CFLAGS} -D_XOPEN_SOURCE=666 -D_POSIX_C_SOURCE=600700 -D_DEFAULT_SOURCE -DLOCALEDIR=\"${LOCALEDIR}\"
     -DPACKAGE_VERSION=\"${VERSION}\" -DGETTEXT_PACKAGE=\"${PROJ}\"
     -DMINOR_VERSION=\"${MINOR_VERSION}\" -DMID_VERSION=\"${MID_VERSION}\"
     -DMAJOR_VERSION=\"${MAJOR_VERSION}\" -DTHREAD_NUMBER=${PROCESSOR_COUNT})

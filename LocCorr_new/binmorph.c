@@ -436,30 +436,30 @@ size_t *il_cclabel4(uint8_t *Img, int W, int H, il_ConnComps **CC){
             l_boxes[i].ymin = H;
         }
         #pragma omp for nowait
-    for(int y = 0; y < H; ++y){
-        size_t *lptr = &labels[y*W];
-        for(int x = 0; x < W; ++x, ++lptr){
-            if(!*lptr) continue;
-            register size_t mark = indexes[*lptr];
-            *lptr = mark;
-            il_Box *b = &l_boxes[mark];
-            ++b->area;
-            if(b->xmax < x) b->xmax = x;
-            if(b->xmin > x) b->xmin = x;
-            if(b->ymax < y) b->ymax = y;
-            if(b->ymin > y) b->ymin = y;
-        }
-    }
-    #pragma omp critical
-    for(size_t i = 1; i < cidx; ++i){
-        il_Box *ob = &boxes[i], *ib = &l_boxes[i];
-        if(ob->xmax < ib->xmax) ob->xmax = ib->xmax;
-        if(ob->xmin > ib->xmin) ob->xmin = ib->xmin;
-        if(ob->ymax < ib->ymax) ob->ymax = ib->ymax;
-        if(ob->ymin > ib->ymin) ob->ymin = ib->ymin;
-        ob->area += ib->area;
-    }
-    FREE(l_boxes);
+            for(int y = 0; y < H; ++y){
+                size_t *lptr = &labels[y*W];
+                for(int x = 0; x < W; ++x, ++lptr){
+                    if(!*lptr) continue;
+                    register size_t mark = indexes[*lptr];
+                    *lptr = mark;
+                    il_Box *b = &l_boxes[mark];
+                    ++b->area;
+                    if(b->xmax < x) b->xmax = x;
+                    if(b->xmin > x) b->xmin = x;
+                    if(b->ymax < y) b->ymax = y;
+                    if(b->ymin > y) b->ymin = y;
+                }
+            }
+        #pragma omp critical
+            for(size_t i = 1; i < cidx; ++i){
+                il_Box *ob = &boxes[i], *ib = &l_boxes[i];
+                if(ob->xmax < ib->xmax) ob->xmax = ib->xmax;
+                if(ob->xmin > ib->xmin) ob->xmin = ib->xmin;
+                if(ob->ymax < ib->ymax) ob->ymax = ib->ymax;
+                if(ob->ymin > ib->ymin) ob->ymin = ib->ymin;
+                ob->area += ib->area;
+            }
+        FREE(l_boxes);
     }
     FREE(assoc);
     FREE(indexes);

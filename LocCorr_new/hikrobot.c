@@ -279,7 +279,7 @@ static int cam_connect(){
         WARNX("Can't turn off triggered mode");
         return FALSE;
     }
-    if(!changeenum("AcquisitionMode", MV_ACQ_MODE_SINGLE)){
+    if(!changeenum("AcquisitionMode", /*MV_ACQ_MODE_SINGLE*/ MV_ACQ_MODE_CONTINUOUS)){
         WARNX("Can't set acquisition mode to single");
         return FALSE;
     }
@@ -356,50 +356,69 @@ static int changeformat(frameformat *f){
     return TRUE;
 }
 
-// exptime - in milliseconds!
 static int setexp(float e){
-    if(!handle) return FALSE;
-    float eS = e / 1e3;
-    if(eS > extrvalues.maxexp || eS < extrvalues.minexp){
-        WARNX("Wrong exposure time: %fs (should be [%fs..%fs])", eS,
+    if(!handle){
+        WARNX("NO HANDLE");
+        return FALSE;
+    }
+    if(e > extrvalues.maxexp || e < extrvalues.minexp){
+        WARNX("Wrong exposure time: %fs (should be [%fs..%fs])", e,
             extrvalues.minexp, extrvalues.maxexp);
         return FALSE;
     }
-    if(!changefloat("ExposureTime", e * 1e3)) return FALSE;
-    exptime = eS;
+    if(!changefloat("ExposureTime", e * 1e6)){
+        WARNX("Can't set exptime %g", e);
+        return FALSE;
+    }
+    exptime = e;
     return TRUE;
 }
 
 static int cam_startexp(){
     if(!handle || !pdata) return FALSE;
-    DBG("Start exposition for %gs", exptime);
+    DBG("+++++ Start exposition for %gs", exptime);
     MV_CC_StopGrabbing(handle);
     TRY(StartGrabbing);
-    ONERR() return FALSE;
+    ONERR(){
+        DBG("+++++ Ooops! Can't start grabbing: try another time!");
+        MV_CC_StopGrabbing(handle);
+        TRY(StartGrabbing);
+        ONERR(){
+            DBG("+++++ ERR!");
+            return FALSE;
+        }
+    }
+    DBG("+++++ OK, started");
     return TRUE;
 }
 
 static Image* capture(){
     double starttime = sl_dtime();
-    if(!cam_startexp()) return NULL;
+    static int isstarted = 0;
+    if(!isstarted){
+        if(!cam_startexp()) return NULL;
+        isstarted = 1;
+    }
     MV_FRAME_OUT_INFO_EX stImageInfo = {0}; // last image info
-    DBG("Started capt @ %g", sl_dtime() - starttime);
+    DBG("^^^^^^^^^^^^^^^^^^^^ Started capt @ %g", sl_dtime() - starttime);
     do{
         usleep(100);
         double diff = exptime - (sl_dtime() - starttime);
         if(diff > 0.) continue; // wait until exposure ends
         DBG("diff = %g", diff);
         if(diff < -MAX_READOUT_TM){ // wait much longer than exp lasts
-            DBG("OOps, time limit");
+            DBG("^^^^^^^^^^^^^^^^^^^^ OOps, time limit");
             MV_CC_StopGrabbing(handle);
+            DBG("Restart grabbing");
+            if(!cam_startexp()) isstarted = 0;
             return NULL;
         }
-        TRY(GetOneFrameTimeout, pdata, pdatasz, &stImageInfo, 10);
+        TRY(GetOneFrameTimeout, pdata, pdatasz, &stImageInfo, 100);
         ONOK() break;
     }while(1);
-    DBG("Tcapt=%g, exptime=%g", sl_dtime() - starttime, exptime);
+    DBG("^^^^^^^^^^^^^^^^^^^^ Tcapt=%g, exptime=%g", sl_dtime() - starttime, exptime);
     Image *captIma = u8toImage(pdata, stImageInfo.nWidth, stImageInfo.nHeight, stImageInfo.nWidth);
-    DBG("return @ %g", sl_dtime() - starttime);
+    DBG("^^^^^^^^^^^^^^^^^^^^ return @ %g", sl_dtime() - starttime);
     return captIma;
 }
 

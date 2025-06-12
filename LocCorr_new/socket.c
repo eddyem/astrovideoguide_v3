@@ -67,6 +67,7 @@ typedef struct{
 static char *helpmsg(const char *messageid, char *buf, int buflen);
 static char *stepperstatus(const char *messageid, char *buf, int buflen);
 static char *getimagedata(const char *messageid, char *buf, int buflen);
+// should be in sorted order
 static getter getterHandlers[] = {
     {"help", helpmsg, "List avaiable commands"},
     {"imdata", getimagedata, "Get image data (status, path, FPS, counter)"},
@@ -80,7 +81,7 @@ static char *setfocusstate(const char *state, char *buf, int buflen);
 static char *moveU(const char *val, char *buf, int buflen);
 static char *moveV(const char *val, char *buf, int buflen);
 static char *addcmnt(const char *cmnt, char *buf, int buflen);
-
+// should be in sorted order
 static setter setterHandlers[] = {
     {"comment", addcmnt, "Add comment to XY log file"},
     {"focus", setfocusstate, "Move focus to given value"},

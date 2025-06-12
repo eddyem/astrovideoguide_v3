@@ -26,7 +26,6 @@
 
 #include "imagefile.h"
 
-void Image_free(Image **ima);
 bool FITS_read(const char *filename, Image **fits);
 
 #endif // FITS_H__

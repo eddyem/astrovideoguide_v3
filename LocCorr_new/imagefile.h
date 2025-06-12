@@ -46,6 +46,7 @@ typedef struct{
     float avg_intensity;
     Imtype background;  // background value
     ptstat_t stat;      // image statistics
+    uint64_t counter;   // image counter
 } Image;
 
 // input file/directory type

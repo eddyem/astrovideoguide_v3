@@ -34,7 +34,7 @@
 #define MAX_THROWPART   (0.9)
 #define MAX_OFFSET      (10000)
 // min/max exposition in ms
-#define EXPOS_MIN       (0.01)
+#define EXPOS_MIN       (1e-9)
 #define EXPOS_MAX       (4001.)
 #define GAIN_MIN        (0.)
 #define GAIN_MAX        (256.)
@@ -99,7 +99,8 @@ typedef struct{
     int medfilt;        // == 1 to make median filter before calculations
     int medseed;        // median seed
     int fixedbkg;       // don't calculate background, use fixed value instead
-    int fixedbkgval;    // value of bk
+    int background;     // value of background
+    int writedebugimgs; // write debugging images: binary/erosion/opening
     // dU = Kxu*dX + Kyu*dY; dV = Kxv*dX + Kyv*dY
     double Kxu; double Kyu;
     double Kxv; double Kyv;
@@ -109,7 +110,7 @@ typedef struct{
     double throwpart;   // part of values to throw avay @ histogram equalisation
     double maxexp;      // minimal and maximal exposition (in ms)
     double minexp;
-    double fixedexp;    // exptime in manual mode
+    double exptime;     // exposure time
     double gain;        // gain value in manual mode
     double brightness;  // brightness @camera
     double intensthres; // threshold for stars intensity comparison: fabs(Ia-Ib)/(Ia+Ib) > thres -> stars differs

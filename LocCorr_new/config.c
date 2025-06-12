@@ -62,7 +62,7 @@ configuration theconf = {
     .throwpart=DEFAULT_THROWPART,
     .maxexp=EXPOS_MAX - 1.,
     .minexp=EXPOS_MIN,
-    .fixedexp=EXPOS_MIN*2,
+    .exptime=EXPOS_MIN*2,
     .gain=20.,
     .intensthres=DEFAULT_INTENSTHRES,
     .medseed=MIN_MEDIAN_SEED,
@@ -74,6 +74,7 @@ static int compConfVals(const void *_1st, const void *_2nd){
     return strcmp(a->name, b->name);
 }
 
+// could be in unsorted order as whould be sorted at first help call
 // {"", PAR_DOUBLE, (void*)&theconf., 0},
 static confparam parvals[] = {
     {"maxarea", PAR_INT, (void*)&theconf.maxarea, 0, MINAREA, MAXAREA,
@@ -99,7 +100,7 @@ static confparam parvals[] = {
     {"equalize", PAR_INT, (void*)&theconf.equalize, 0, 0., 1.,
      "make histogram equalization"},
     {"expmethod", PAR_INT, (void*)&theconf.expmethod, 0, 0., 1.,
-     "exposition method: 0 - auto, 1 - fixed"},
+     "0 - automatic calculation of gain and exptime, 1 - use fixed values"},
     {"naverage", PAR_INT, (void*)&theconf.naverage, 0, 1., NAVER_MAX,
      "calculate mean position by N images"},
     {"umax", PAR_INT, (void*)&theconf.maxUpos, 0, -MAXSTEPS, MAXSTEPS,
@@ -146,8 +147,8 @@ static confparam parvals[] = {
      "minimal exposition time"},
     {"maxexp", PAR_DOUBLE, (void*)&theconf.maxexp, 0, 0., EXPOS_MAX,
      "maximal exposition time"},
-    {"fixedexp", PAR_DOUBLE, (void*)&theconf.fixedexp, 0, EXPOS_MIN, EXPOS_MAX,
-     "fixed (in manual mode) exposition time"},
+    {"exptime", PAR_DOUBLE, (void*)&theconf.exptime, 0, EXPOS_MIN, EXPOS_MAX,
+     "exposition time (you can change it only when expmethod==1)"},
     {"intensthres", PAR_DOUBLE, (void*)&theconf.intensthres, 0, 0., 1.,
      "threshold by total object intensity when sorting = |I1-I2|/(I1+I2)"},
     {"gain", PAR_DOUBLE, (void*)&theconf.gain, 0, GAIN_MIN, GAIN_MAX,
@@ -162,8 +163,10 @@ static confparam parvals[] = {
      "median filter radius"},
     {"fixedbg", PAR_INT, (void*)&theconf.fixedbkg, 0, 0., 1.,
      "don't calculate background, use fixed value instead"},
-    {"fbglevel", PAR_INT, (void*)&theconf.fixedbkgval, 0, FIXED_BK_MIN, FIXED_BK_MAX,
+    {"background", PAR_INT, (void*)&theconf.background, 0, FIXED_BK_MIN, FIXED_BK_MAX,
      "fixed background level"},
+    {"writedi", PAR_INT, (void*)&theconf.writedebugimgs, 0, 0., 1.,
+     "write debug images (binary/erosion/opening)"},
     {NULL,  0,  NULL, 0, 0., 0., NULL}
 };
 

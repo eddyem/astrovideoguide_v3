@@ -203,8 +203,6 @@ void process_file(Image *I){
     static int prev_x = -1, prev_y = -1;
     static object *Objects = NULL;
     static size_t Nallocated = 0;
-    il_ConnComps *cc = NULL;
-    size_t *S = NULL;
 #ifdef EBUG
     double t0 = sl_dtime(), tlast = t0;
 #define DELTA(p) do{double t = sl_dtime(); DBG("---> %s @ %gms (delta: %gms)", p, (t-t0)*1e3, (t-tlast)*1e3); tlast = t;}while(0)
@@ -225,6 +223,7 @@ void process_file(Image *I){
     //DELTA("Save original");
     if(calc_background(I)){
         DBG("backgr = %d", I->background);
+        theconf.background = I->background;
         DELTA("Got background");
         int objctr = 0;
         if(prev_x > 0 && prev_y > 0){
@@ -273,25 +272,32 @@ void process_file(Image *I){
         uint8_t *ibin = Im2bin(I, I->background);
         DELTA("Made binary");
         if(ibin){
-            Image *Itmp = bin2Im(ibin, I->width, I->height);
+            if(theconf.writedebugimgs){
+                Image *Itmp = bin2Im(ibin, I->width, I->height);
                 Image_write_jpg(Itmp, "binary.jpg", 1);
                 Image_free(&Itmp);
                 DELTA("save binary");
+            }
             uint8_t *er = il_erosionN(ibin, W, H, theconf.Nerosions);
             FREE(ibin);
             DELTA("Erosion");
-                Itmp = bin2Im(er, I->width, I->height);
+            if(theconf.writedebugimgs){
+                Image *Itmp = bin2Im(er, I->width, I->height);
                 Image_write_jpg(Itmp, "erosion.jpg", 1);
                 Image_free(&Itmp);
                 DELTA("Save erosion");
+            }
             uint8_t *opn = il_dilationN(er, W, H, theconf.Ndilations);
             FREE(er);
             DELTA("Opening");
-                Itmp = bin2Im(opn, I->width, I->height);
+            if(theconf.writedebugimgs){
+                Image *Itmp = bin2Im(opn, I->width, I->height);
                 Image_write_jpg(Itmp, "opening.jpg", 1);
                 Image_free(&Itmp);
                 DELTA("Save opening");
-            S = il_cclabel4(opn, W, H, &cc);
+            }
+            il_ConnComps *cc = NULL;
+            size_t *S = il_cclabel4(opn, W, H, &cc);
             FREE(opn);
             if(S && cc) DBG("Nobj=%zd", cc->Nobj-1);
             if(S && cc && cc->Nobj > 1){ // Nobj = amount of objects + 1
@@ -329,68 +335,68 @@ void process_file(Image *I){
                     else
                         qsort(Objects, objctr, sizeof(object), compDist);
                 }
-SKIP_FULL_PROCESS:
-                DBGLOG("T%.2f, N=%d\n", sl_dtime(), objctr);
-                DELTA("Calculate deviations");
-                if(objctr){
-#ifdef EBUG
-                    object *o = Objects;
-                    green("%6s\t%6s\t%6s\t%6s\t%6s\t%6s\t%6s\t%6s\t%8s\n",
-                          "N", "Area", "Mv", "W/H", "Xc", "Yc", "Sx", "Sy", "Area/r^2");
-                    for(int i = 0; i < objctr; ++i, ++o){
-                        // 1.0857 = 2.5/ln(10)
-                        printf("%6d\t%6d\t%6.1f\t%6.1f\t%6.1f\t%6.1f\t%6.1f\t%6.1f\t%8.1f\n",
-                               i, o->area, 20.-1.0857*log(o->Isum), o->WdivH, o->xc, o->yc,
-                               o->xsigma, o->ysigma, o->area/o->xsigma/o->ysigma);
-                    }
-#endif
-                    getDeviation(Objects); // calculate dX/dY and process corrections
-                }
-                DELTA("prepare image");
-                { // prepare image and save jpeg
-                    uint8_t *outp = NULL;
-                    if(theconf.equalize)
-                        outp = equalize(I, 3, theconf.throwpart);
-                    else
-                        outp = linear(I, 3);
-                    static il_Pattern *cross = NULL, *crossL = NULL;
-                    if(!cross) cross = il_Pattern_xcross(33, 33);
-                    if(!crossL) crossL = il_Pattern_xcross(51, 51);
-                    il_Img3 i3 = {.data = outp, .w = I->width, .h = H};
-                    DELTA("Draw crosses");
-                    // draw fiber center position
-                    il_Pattern_draw3(&i3, crossL, theconf.xtarget-theconf.xoff, H-(theconf.ytarget-theconf.yoff), C_R);
-                    if(objctr){ // draw crosses @ objects' centers
-                        int H = I->height;
-                        // draw current star centroid
-                        il_Pattern_draw3(&i3, cross, Objects[0].xc, H-Objects[0].yc, C_G);
-                        // add offset to show in target system
-                        xc = Objects[0].xc + theconf.xoff;
-                        yc = Objects[0].yc + theconf.yoff;
-                        // draw other centroids
-                        for(int i = 1; i < objctr; ++i)
-                            il_Pattern_draw3(&i3, cross, Objects[i].xc, H-Objects[i].yc, C_B);
-                    }else{xc = -1.; yc = -1.;}
-                    char tmpnm[FILENAME_MAX+5];
-                    sprintf(tmpnm, "%s-tmp", GP->outputjpg);
-                    if(stbi_write_jpg(tmpnm, I->width, I->height, 3, outp, 95)){
-                        if(rename(tmpnm, GP->outputjpg)){
-                            WARN("rename()");
-                            LOGWARN("can't save %s", GP->outputjpg);
-                        }
-                    }
-                    DELTA("Written");
-                    FREE(outp);
-                }
-            }else{
-                xc = -1.; yc = -1.;
-                Image_write_jpg(I, GP->outputjpg, theconf.equalize);
             }
-            DBGLOG("Image saved");
             FREE(S);
             FREE(cc);
         }
-    }else Image_write_jpg(I, GP->outputjpg, theconf.equalize);
+SKIP_FULL_PROCESS:
+        DBGLOG("T%.2f, N=%d\n", sl_dtime(), objctr);
+        DELTA("Calculate deviations");
+        if(objctr){
+#ifdef EBUG
+            object *o = Objects;
+            green("%6s\t%6s\t%6s\t%6s\t%6s\t%6s\t%6s\t%6s\t%8s\n",
+                  "N", "Area", "Mv", "W/H", "Xc", "Yc", "Sx", "Sy", "Area/r^2");
+            for(int i = 0; i < objctr; ++i, ++o){
+                // 1.0857 = 2.5/ln(10)
+                printf("%6d\t%6d\t%6.1f\t%6.1f\t%6.1f\t%6.1f\t%6.1f\t%6.1f\t%8.1f\n",
+                       i, o->area, 20.-1.0857*log(o->Isum), o->WdivH, o->xc, o->yc,
+                       o->xsigma, o->ysigma, o->area/o->xsigma/o->ysigma);
+            }
+#endif
+            getDeviation(Objects); // calculate dX/dY and process corrections
+        }
+        DELTA("prepare image");
+        { // prepare image and save jpeg
+            uint8_t *outp = NULL;
+            if(theconf.equalize)
+                outp = equalize(I, 3, theconf.throwpart);
+            else
+                outp = linear(I, 3);
+            static il_Pattern *cross = NULL, *crossL = NULL;
+            if(!cross) cross = il_Pattern_xcross(33, 33);
+            if(!crossL) crossL = il_Pattern_xcross(51, 51);
+            il_Img3 i3 = {.data = outp, .w = I->width, .h = H};
+            DELTA("Draw crosses");
+            // draw fiber center position
+            il_Pattern_draw3(&i3, crossL, theconf.xtarget-theconf.xoff, H-(theconf.ytarget-theconf.yoff), C_R);
+            if(objctr){ // draw crosses @ objects' centers
+                int H = I->height;
+                // draw current star centroid
+                il_Pattern_draw3(&i3, cross, Objects[0].xc, H-Objects[0].yc, C_G);
+                // add offset to show in target system
+                xc = Objects[0].xc + theconf.xoff;
+                yc = Objects[0].yc + theconf.yoff;
+                // draw other centroids
+                for(int i = 1; i < objctr; ++i)
+                    il_Pattern_draw3(&i3, cross, Objects[i].xc, H-Objects[i].yc, C_B);
+            }else{xc = -1.; yc = -1.;}
+            char tmpnm[FILENAME_MAX+5];
+            sprintf(tmpnm, "%s-tmp", GP->outputjpg);
+            if(stbi_write_jpg(tmpnm, I->width, I->height, 3, outp, 95)){
+                if(rename(tmpnm, GP->outputjpg)){
+                    WARN("rename()");
+                    LOGWARN("can't save %s", GP->outputjpg);
+                }
+            }
+            DELTA("Written");
+            FREE(outp);
+        }
+    }else{
+        xc = -1.; yc = -1.;
+        Image_write_jpg(I, GP->outputjpg, theconf.equalize);
+    }
+    DBGLOG("Image saved");
     ++ImNumber;
     if(lastTproc > 1.) FPS = 1. / (sl_dtime() - lastTproc);
     lastTproc = sl_dtime();
