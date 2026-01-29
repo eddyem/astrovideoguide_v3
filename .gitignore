@@ -3,6 +3,7 @@
 
 # Object files
 *.o
+*/mk/*
 
 # Libraries
 *.lib

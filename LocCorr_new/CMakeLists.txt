@@ -20,13 +20,13 @@ option(BASLER "Add Basler cameras support" OFF)
 option(GRASSHOPPER "Add GrassHopper cameras support" OFF)
 option(HIKROBOT "Add HikRobot cameras support" OFF)
 
-# default flags
-set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -W -Wextra -std=c17")
+# default flags (c17 because MVS code have `typedef char bool`)
+set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -W -Wextra -Werror -std=c17")
 set(CMAKE_COLOR_MAKEFILE ON)
 
 # cmake -DDEBUG=yes -> debugging
 if(DEBUG)
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Og -g3 -ggdb -fno-builtin-strlen -Werror")
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Og -g3 -ggdb -fno-builtin-strlen")
     add_definitions(-DEBUG)
     set(CMAKE_BUILD_TYPE DEBUG)
     set(CMAKE_VERBOSE_MAKEFILE "ON")

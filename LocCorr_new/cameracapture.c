@@ -301,7 +301,9 @@ int camcapture(void (*process)(Image*)){
     }
     exptime = theconf.exptime;
     while(1){
+#ifdef EBUG
         double t0 = sl_dtime();
+#endif
         if(stopwork){
             DBG("STOP");
             break;

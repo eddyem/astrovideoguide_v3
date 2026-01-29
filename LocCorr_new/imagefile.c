@@ -39,7 +39,7 @@
 #include "median.h"
 
 typedef struct{
-    const char signature[8];
+    const uint8_t signature[8];
     uint8_t len;
     InputType it;
 } imsign;
