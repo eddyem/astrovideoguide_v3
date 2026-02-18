@@ -239,12 +239,12 @@ static void *procthread(void* v){
     void (*process)(Image*) = (procfn_t)v;
 #ifdef EBUG
     double t0 = sl_dtime();
+    int imno = 0;
 #endif
     while(!stopwork){
         pthread_mutex_lock(&capt_mutex);
-        //DBG("===== iCaptured=%d", iCaptured);
         if(Icap[iCaptured]){
-            DBG("===== got image iCaptured=#%d @ %g", iCaptured, sl_dtime() - t0);
+            DBG("===== got image #%d, iCaptured=#%d @ %g", imno++, iCaptured, sl_dtime() - t0);
             Image *oIma = Icap[iCaptured]; // take image here and free buffer
             Icap[iCaptured] = NULL;
             pthread_mutex_unlock(&capt_mutex);
@@ -300,6 +300,9 @@ int camcapture(void (*process)(Image*)){
         ERR("pthread_create()");
     }
     exptime = theconf.exptime;
+#ifdef EBUG
+    static int imno = 0;
+#endif
     while(1){
 #ifdef EBUG
         double t0 = sl_dtime();
@@ -371,7 +374,7 @@ int camcapture(void (*process)(Image*)){
             }
             continue;
         }else errctr = 0;
-        DBG("---- Grabbed @ %g", sl_dtime() - t0);
+        DBG("---- Grabbed #%d @ %g", imno++, sl_dtime() - t0);
         pthread_mutex_lock(&capt_mutex);
         if(iCaptured < 0) iCaptured = 0;
         else iCaptured = !iCaptured;
@@ -388,7 +391,7 @@ int camcapture(void (*process)(Image*)){
             Image_free(&oIma);
         }
         pthread_mutex_unlock(&capt_mutex);
-        DBG("unlocked, T=%g", sl_dtime() - t0);
+        DBG("T=%g", sl_dtime() - t0);
     }
     pthread_cancel(proc_thread);
     if(oIma) Image_free(&oIma);

@@ -37,6 +37,7 @@
 #include "hikrobot.h"
 #include "imagefile.h"
 #include "median.h"
+#include "Toupcam.h"
 
 typedef struct{
     const uint8_t signature[8];
@@ -112,6 +113,9 @@ InputType chkinput(const char *name){
 #endif
 #ifdef MVS_FOUND
     if(0 == strcmp(name, HIKROBOT_CAPT_NAME)) return T_CAPT_HIKROBOT;
+#endif
+#ifdef TOUPCAM_FOUND
+    if(0 == strcmp(name, TOUPCAM_CAPT_NAME)) return T_CAPT_TOUPCAM;
 #endif
     struct stat fd_stat;
     stat(name, &fd_stat);

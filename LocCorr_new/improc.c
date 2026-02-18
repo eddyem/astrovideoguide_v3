@@ -35,6 +35,7 @@
 #include "improc.h"
 #include "inotify.h"
 #include "steppers.h"
+#include "Toupcam.h"
 
 volatile atomic_ullong ImNumber = 0; // GLOBAL: counter of processed images
 volatile atomic_bool stopwork = FALSE; // GLOBAL: suicide
@@ -424,7 +425,7 @@ int process_input(InputType tp, char *name){
     if(tp == T_DIRECTORY){
         imagedata = watchdr;
         return watch_directory(name, process_file);
-    }else if(tp == T_CAPT_GRASSHOPPER || tp == T_CAPT_BASLER || tp == T_CAPT_HIKROBOT){
+    }else if(tp == T_CAPT_GRASSHOPPER || tp == T_CAPT_BASLER || tp == T_CAPT_HIKROBOT || tp == T_CAPT_TOUPCAM){
         camera *cam = NULL;
         switch(tp){
             case T_CAPT_GRASSHOPPER:
@@ -440,6 +441,11 @@ int process_input(InputType tp, char *name){
             case T_CAPT_HIKROBOT:
 #ifdef MVS_FOUND
                 cam = &Hikrobot;
+#endif
+                break;
+            case T_CAPT_TOUPCAM:
+#ifdef TOUPCAM_FOUND
+                cam = &Toupcam;
 #endif
                 break;
             default: return FALSE;

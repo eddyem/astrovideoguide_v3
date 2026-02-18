@@ -19,6 +19,7 @@ option(DEBUG "Compile in debug mode" OFF)
 option(BASLER "Add Basler cameras support" OFF)
 option(GRASSHOPPER "Add GrassHopper cameras support" OFF)
 option(HIKROBOT "Add HikRobot cameras support" OFF)
+option(TOUPCAM "Add Toupcam CMOS support" OFF)
 
 # default flags (c17 because MVS code have `typedef char bool`)
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -W -Wextra -Werror -std=c17")
@@ -63,6 +64,13 @@ if(HIKROBOT)
 else()
     list(REMOVE_ITEM SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/hikrobot.c")
 endif()
+if(TOUPCAM)
+    pkg_check_modules(TOUPCAM REQUIRED toupcam)
+    add_definitions("-DTOUPCAM_FOUND=1")
+else()
+    list(REMOVE_ITEM SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/toupcam.c")
+endif()
+
 pkg_check_modules(MODULES REQUIRED ${MODULES})
 
 include(FindOpenMP)
@@ -89,10 +97,10 @@ message("Install dir prefix: ${CMAKE_INSTALL_PREFIX}")
 # exe file
 add_executable(${PROJ} ${SOURCES})
 # -I
-target_include_directories(${PROJ} PUBLIC ${MODULES_INCLUDE_DIRS} ${FLYCAP_INCLUDE_DIRS} ${BASLER_INCLUDE_DIRS} ${MVS_INCLUDE_DIRS})
+target_include_directories(${PROJ} PUBLIC ${MODULES_INCLUDE_DIRS} ${FLYCAP_INCLUDE_DIRS} ${BASLER_INCLUDE_DIRS} ${MVS_INCLUDE_DIRS} ${TOUPCAM_INCLUDE_DIRS})
 # -L
-target_link_directories(${PROJ} PUBLIC ${MODULES_LIBRARY_DIRS} ${FLYCAP_LIBRARY_DIRS} ${BASLER_LIBRARY_DIRS} ${MVS_LIBRARY_DIRS})
-message("MOD: ${MODULES_LIBRARY_DIRS}, FC: ${FLYCAP_LIBRARY_DIRS}, MVS: ${MVS_LIBRARY_DIRS}")
+target_link_directories(${PROJ} PUBLIC ${MODULES_LIBRARY_DIRS} ${FLYCAP_LIBRARY_DIRS} ${BASLER_LIBRARY_DIRS} ${MVS_LIBRARY_DIRS} ${TOUPCAM_LIBRARY_DIRS})
+message("MOD: ${MODULES_LIBRARY_DIRS}, FC: ${FLYCAP_LIBRARY_DIRS}, MVS: ${MVS_LIBRARY_DIRS}, TOUPCAM: ${TOUPCAM_LIBRARY_DIRS}")
 # -D
 add_definitions(${CFLAGS} -D_XOPEN_SOURCE=666 -D_POSIX_C_SOURCE=600700 -D_DEFAULT_SOURCE -DLOCALEDIR=\"${LOCALEDIR}\"
     -DPACKAGE_VERSION=\"${VERSION}\" -DGETTEXT_PACKAGE=\"${PROJ}\"
@@ -100,7 +108,7 @@ add_definitions(${CFLAGS} -D_XOPEN_SOURCE=666 -D_POSIX_C_SOURCE=600700 -D_DEFAUL
     -DMAJOR_VERSION=\"${MAJOR_VERSION}\" -DTHREAD_NUMBER=${PROCESSOR_COUNT})
 
 # -l
-target_link_libraries(${PROJ} ${MODULES_LIBRARIES} ${FLYCAP_LIBRARIES} ${BASLER_LIBRARIES} ${MVS_LIBRARIES} -lm)
+target_link_libraries(${PROJ} ${MODULES_LIBRARIES} ${FLYCAP_LIBRARIES} ${BASLER_LIBRARIES} ${MVS_LIBRARIES} ${TOUPCAM_LIBRARIES} -lm)
 
 # Installation of the program
 INSTALL(TARGETS ${PROJ} DESTINATION "bin")

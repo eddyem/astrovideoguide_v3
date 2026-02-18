@@ -76,7 +76,8 @@ static InputType chk_inp(const char *name){
     if(!name) ERRX("Point file or directory name to monitor");
     InputType itp = chkinput(name);
     if(T_WRONG == itp) return T_WRONG;
-    green("\n%s is a ", name);
+    green("\n%s", name);
+    printf(" is a ");
     switch(itp){
         case T_DIRECTORY:
             printf("directory");
@@ -107,6 +108,9 @@ static InputType chk_inp(const char *name){
         break;
         case T_CAPT_HIKROBOT:
             printf("hikrobot camera capture");
+        break;
+        case T_CAPT_TOUPCAM:
+            printf("toupcam camera capture");
         break;
         default:
             printf("unsupported type\n");
